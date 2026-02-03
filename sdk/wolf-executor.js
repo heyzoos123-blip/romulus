@@ -349,12 +349,15 @@ Execute tasks efficiently. Report results clearly. 🐺`;
         };
       }
       
+      const postId = data.id || data.post_id || data.postId;
+      const postUrl = data.url || `https://moltbook.com/m/${community}/${postId}`;
+      
       console.log('[MOLTBOOK] Posted successfully:', data);
       return {
         success: true,
-        postId: data.id || data.post_id,
-        url: data.url || `https://moltbook.com/m/${community}/${data.id || data.post_id}`,
-        message: `Posted to m/${community}: "${content.slice(0, 80)}..."`
+        postId: postId,
+        url: postUrl,
+        message: `✅ Posted to m/${community}!\n\n📝 "${content.slice(0, 100)}${content.length > 100 ? '...' : ''}"\n\n🔗 View your post: ${postUrl}`
       };
       
     } catch (e) {
