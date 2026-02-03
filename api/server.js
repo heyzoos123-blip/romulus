@@ -20,9 +20,11 @@ const { RomulusClient } = require('../sdk/romulus-client');
 const { ProofOfHunt } = require('../scripts/proof-of-hunt');
 const { TreasuryWolf } = require('../scripts/treasury-wolf');
 const { BountyBoard } = require('../sdk/bounty-board');
+const { ActivityFeed } = require('../sdk/activity-feed');
 
-// Initialize bounty board
+// Initialize services
 const bountyBoard = new BountyBoard();
+const activityFeed = new ActivityFeed();
 
 const PORT = process.env.ROMULUS_PORT || 3030;
 
@@ -80,7 +82,11 @@ const routes = {
         'POST /bounties/claim    - claim a bounty',
         'POST /bounties/submit   - submit completion',
         'POST /bounties/verify   - verify & payout',
-        'GET  /bounties/leaderboard - wolf rankings'
+        'GET  /bounties/leaderboard - wolf rankings',
+        '--- ACTIVITY FEED ---',
+        'GET  /activity          - recent events',
+        'GET  /activity/summary  - activity summary',
+        'POST /activity          - log custom event'
       ]
     });
   },
@@ -271,6 +277,41 @@ const routes = {
   'GET /bounties/leaderboard': (req, res) => {
     const leaderboard = bountyBoard.getLeaderboard(20);
     jsonResponse(res, leaderboard);
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // ACTIVITY FEED ENDPOINTS
+  // ═══════════════════════════════════════════════════════
+
+  // Recent activity
+  'GET /activity': (req, res) => {
+    const parsedUrl = url.parse(req.url, true);
+    const limit = parseInt(parsedUrl.query.limit) || 50;
+    const sinceId = parseInt(parsedUrl.query.since) || 0;
+    const events = activityFeed.getRecent(limit, sinceId);
+    jsonResponse(res, events);
+  },
+
+  // Activity summary
+  'GET /activity/summary': (req, res) => {
+    const parsedUrl = url.parse(req.url, true);
+    const hours = parseInt(parsedUrl.query.hours) || 24;
+    const summary = activityFeed.getSummary(hours);
+    jsonResponse(res, summary);
+  },
+
+  // Log custom event (for external agents)
+  'POST /activity': async (req, res) => {
+    try {
+      const body = await parseBody(req);
+      if (!body.type || !body.data) {
+        return jsonResponse(res, { error: 'type and data required' }, 400);
+      }
+      const event = activityFeed.log(body.type, body.data);
+      jsonResponse(res, { event }, 201);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 400);
+    }
   }
 };
 
