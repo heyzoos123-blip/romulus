@@ -139,9 +139,10 @@ const routes = {
       endpoints: [
         'GET  /                  - this info',
         '--- ACCESS (pay to use) ---',
-        'GET  /access/pricing    - get pricing info',
-        'POST /access/purchase   - verify payment & get API key',
-        'GET  /access/stats      - key issuance stats',
+        'GET  /access/pricing    - get pricing & credit costs',
+        'POST /access/purchase   - buy credits (0.05 SOL = 50 credits)',
+        'GET  /access/balance    - check your credit balance (🔑)',
+        'GET  /access/stats      - public stats',
         '--- CORE ---',
         'GET  /stats             - network statistics',
         'GET  /packs             - list all packs',
@@ -204,7 +205,7 @@ const routes = {
     });
   },
 
-  // Purchase access - verify payment and issue key (PUBLIC)
+  // Purchase credits - verify payment and issue/top-up key (PUBLIC)
   'POST /access/purchase': async (req, res) => {
     try {
       const body = await parseBody(req);
@@ -216,33 +217,54 @@ const routes = {
         }, 400);
       }
       
-      const result = await paymentGate.processPurchase(
+      // Allow topping up existing key
+      const result = await paymentGate.purchaseCredits(
         body.txSignature,
-        body.payerWallet || 'unknown'
+        body.payerWallet || 'unknown',
+        body.apiKey // optional - to top up existing key
       );
       
       if (!result.success) {
-        // If tx was already used, return the existing key
-        if (result.existingKey) {
-          return jsonResponse(res, {
-            error: result.error,
-            existingKey: result.existingKey,
-            hint: 'This transaction was already used. Here is your existing key.'
-          }, 400);
-        }
         return jsonResponse(res, { error: result.error }, 400);
       }
       
       // Log the purchase
-      activityFeed.log('api_key_purchased', {
+      activityFeed.log('credits_purchased', {
         payerWallet: body.payerWallet,
-        amountSOL: result.amountPaid
+        amountSOL: result.amountPaid,
+        credits: result.credits || result.creditsAdded
       });
       
       jsonResponse(res, result, 201);
     } catch (e) {
       jsonResponse(res, { error: e.message }, 500);
     }
+  },
+
+  // Check credit balance (requires auth)
+  'GET /access/balance': (req, res) => {
+    const auth = checkAuth(req);
+    if (!auth.authorized) {
+      return jsonResponse(res, { 
+        error: 'Unauthorized', 
+        hint: 'Provide your API key to check balance'
+      }, 401);
+    }
+    
+    const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
+    const balance = paymentGate.checkCredits(apiKey);
+    
+    if (!balance.valid) {
+      return jsonResponse(res, { error: balance.error }, 400);
+    }
+    
+    jsonResponse(res, {
+      credits: balance.credits,
+      totalPurchased: balance.totalPurchased,
+      totalUsed: balance.totalUsed,
+      isMaster: balance.isMaster || false,
+      costs: paymentGate.getPricing().costs
+    });
   },
 
   // Access stats (PUBLIC - shows aggregate only)
@@ -304,7 +326,7 @@ const routes = {
     }
   },
 
-  // Spawn wolf (PROTECTED)
+  // Spawn wolf (PROTECTED + COSTS CREDITS)
   'POST /wolves/spawn': async (req, res) => {
     try {
       // Auth check
@@ -314,6 +336,20 @@ const routes = {
           error: 'Unauthorized', 
           hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
         }, 401);
+      }
+      
+      // Get API key for credit deduction
+      const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
+      
+      // Check and deduct credits
+      const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn');
+      if (!creditResult.success) {
+        return jsonResponse(res, { 
+          error: creditResult.error,
+          credits: creditResult.credits,
+          needed: creditResult.needed,
+          hint: 'Top up at POST /access/purchase'
+        }, 402); // 402 Payment Required
       }
       
       const body = await parseBody(req);
@@ -328,6 +364,10 @@ const routes = {
       if (result.error) {
         return jsonResponse(res, result, 404);
       }
+      
+      // Add credits info to response
+      result.creditsRemaining = creditResult.remaining;
+      
       jsonResponse(res, result, 201);
     } catch (e) {
       jsonResponse(res, { error: e.message }, 400);

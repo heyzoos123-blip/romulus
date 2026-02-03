@@ -1,8 +1,10 @@
 /**
- * Romulus Payment Gate
+ * Romulus Payment Gate v2
  * 
- * Verifies SOL payments and issues API keys.
- * Price: 0.05 SOL one-time for API access.
+ * Credit-based system:
+ * - 0.05 SOL = 50 wolf spawn credits
+ * - Each spawn costs 1 credit
+ * - Top up anytime with more SOL
  * 
  * @author darkflobi
  */
@@ -14,12 +16,21 @@ const path = require('path');
 // Treasury wallet - payments must be sent here
 const TREASURY_WALLET = 'FkjfuNd1pvKLPzQWm77WfRy1yNWRhqbBPt9EexuvvmCD';
 
-// Price in SOL
-const ACCESS_PRICE_SOL = 0.05;
+// Pricing
+const CREDITS_PER_SOL = 1000;  // 1 SOL = 1000 credits
+const MIN_PURCHASE_SOL = 0.05; // Minimum purchase
+const MIN_CREDITS = MIN_PURCHASE_SOL * CREDITS_PER_SOL; // 50 credits minimum
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const ACCESS_PRICE_LAMPORTS = ACCESS_PRICE_SOL * LAMPORTS_PER_SOL;
 
-// Storage for issued keys
+// Cost per operation (in credits)
+const COSTS = {
+  wolf_spawn: 1,
+  bounty_post: 1,
+  proof_anchor: 2,  // on-chain costs more
+  agent_hire: 1
+};
+
+// Storage
 const KEYS_FILE = path.join(__dirname, '../data/api-keys.json');
 
 class PaymentGate {
@@ -35,7 +46,7 @@ class PaymentGate {
     } catch (e) {
       console.error('Error loading keys:', e.message);
     }
-    return { issued: [], revoked: [] };
+    return { issued: [], revoked: [], transactions: [] };
   }
 
   saveKeys() {
@@ -53,20 +64,12 @@ class PaymentGate {
 
   /**
    * Verify a SOL payment transaction
-   * @param {string} txSignature - Solana transaction signature
-   * @param {string} payerWallet - Wallet that sent the payment
-   * @returns {Promise<{valid: boolean, error?: string}>}
    */
-  async verifyPayment(txSignature, payerWallet) {
+  async verifyPayment(txSignature) {
     try {
-      // Check if this tx was already used
-      const existingKey = this.keys.issued.find(k => k.txSignature === txSignature);
-      if (existingKey) {
-        return { 
-          valid: false, 
-          error: 'Transaction already used',
-          existingKey: existingKey.apiKey 
-        };
+      // Check if tx already used
+      if (this.keys.transactions?.includes(txSignature)) {
+        return { valid: false, error: 'Transaction already used' };
       }
 
       // Fetch transaction from Solana RPC
@@ -91,12 +94,11 @@ class PaymentGate {
       }
 
       if (!data.result) {
-        return { valid: false, error: 'Transaction not found' };
+        return { valid: false, error: 'Transaction not found (may need a few seconds to confirm)' };
       }
 
       const tx = data.result;
       
-      // Check if transaction was successful
       if (tx.meta?.err) {
         return { valid: false, error: 'Transaction failed on-chain' };
       }
@@ -116,25 +118,20 @@ class PaymentGate {
       }
 
       if (treasuryIndex === -1) {
-        return { valid: false, error: 'Treasury wallet not found in transaction' };
+        return { valid: false, error: 'Payment must be sent to treasury: ' + TREASURY_WALLET };
       }
 
-      // Calculate amount received by treasury
-      const amountReceived = postBalances[treasuryIndex] - preBalances[treasuryIndex];
+      const amountLamports = postBalances[treasuryIndex] - preBalances[treasuryIndex];
+      const amountSOL = amountLamports / LAMPORTS_PER_SOL;
       
-      if (amountReceived < ACCESS_PRICE_LAMPORTS) {
-        const receivedSOL = amountReceived / LAMPORTS_PER_SOL;
+      if (amountSOL < MIN_PURCHASE_SOL) {
         return { 
           valid: false, 
-          error: `Insufficient payment: received ${receivedSOL} SOL, required ${ACCESS_PRICE_SOL} SOL` 
+          error: `Minimum purchase is ${MIN_PURCHASE_SOL} SOL (received ${amountSOL.toFixed(4)} SOL)` 
         };
       }
 
-      return { 
-        valid: true, 
-        amountSOL: amountReceived / LAMPORTS_PER_SOL,
-        treasuryWallet: TREASURY_WALLET
-      };
+      return { valid: true, amountSOL };
 
     } catch (e) {
       return { valid: false, error: `Verification failed: ${e.message}` };
@@ -142,29 +139,49 @@ class PaymentGate {
   }
 
   /**
-   * Process a purchase - verify payment and issue key
-   * @param {string} txSignature - Solana transaction signature
-   * @param {string} payerWallet - Wallet that sent the payment
-   * @returns {Promise<{success: boolean, apiKey?: string, error?: string}>}
+   * Purchase credits or create new key
    */
-  async processPurchase(txSignature, payerWallet) {
-    const verification = await this.verifyPayment(txSignature, payerWallet);
+  async purchaseCredits(txSignature, payerWallet, existingApiKey = null) {
+    const verification = await this.verifyPayment(txSignature);
     
     if (!verification.valid) {
-      return { 
-        success: false, 
-        error: verification.error,
-        existingKey: verification.existingKey 
-      };
+      return { success: false, error: verification.error };
     }
 
-    // Generate and store new API key
+    const creditsToAdd = Math.floor(verification.amountSOL * CREDITS_PER_SOL);
+    
+    // Record transaction
+    if (!this.keys.transactions) this.keys.transactions = [];
+    this.keys.transactions.push(txSignature);
+
+    // If existing key provided, add credits to it
+    if (existingApiKey) {
+      const record = this.keys.issued.find(k => k.apiKey === existingApiKey && k.status === 'active');
+      if (record) {
+        record.credits += creditsToAdd;
+        record.totalPurchased = (record.totalPurchased || 0) + verification.amountSOL;
+        record.lastTopUp = new Date().toISOString();
+        this.saveKeys();
+        
+        return {
+          success: true,
+          apiKey: existingApiKey,
+          creditsAdded: creditsToAdd,
+          totalCredits: record.credits,
+          amountPaid: verification.amountSOL,
+          message: `Added ${creditsToAdd} credits to your account 🐺`
+        };
+      }
+    }
+
+    // Create new key with credits
     const apiKey = this.generateApiKey();
     const keyRecord = {
       apiKey,
-      payerWallet,
-      txSignature,
-      amountSOL: verification.amountSOL,
+      payerWallet: payerWallet || 'unknown',
+      credits: creditsToAdd,
+      totalPurchased: verification.amountSOL,
+      totalUsed: 0,
       issuedAt: new Date().toISOString(),
       status: 'active'
     };
@@ -175,32 +192,86 @@ class PaymentGate {
     return {
       success: true,
       apiKey,
-      message: 'Payment verified. Welcome to the pack. 🐺',
+      credits: creditsToAdd,
       amountPaid: verification.amountSOL,
-      issuedAt: keyRecord.issuedAt
+      message: `Welcome to the pack. ${creditsToAdd} credits loaded. 🐺`
     };
   }
 
   /**
-   * Validate an API key
-   * @param {string} apiKey 
-   * @returns {{valid: boolean, record?: object}}
+   * Use credits for an operation
+   */
+  useCredits(apiKey, operation = 'wolf_spawn') {
+    const cost = COSTS[operation] || 1;
+    
+    // Master key has unlimited credits
+    const masterKey = process.env.ROMULUS_MASTER_KEY;
+    if (masterKey && apiKey === masterKey) {
+      return { success: true, isMaster: true, remaining: Infinity };
+    }
+
+    const record = this.keys.issued.find(k => k.apiKey === apiKey && k.status === 'active');
+    if (!record) {
+      return { success: false, error: 'Invalid API key' };
+    }
+
+    if (record.credits < cost) {
+      return { 
+        success: false, 
+        error: `Insufficient credits. Need ${cost}, have ${record.credits}. Top up at /access/pricing`,
+        credits: record.credits,
+        needed: cost
+      };
+    }
+
+    record.credits -= cost;
+    record.totalUsed = (record.totalUsed || 0) + cost;
+    this.saveKeys();
+
+    return { 
+      success: true, 
+      creditsUsed: cost,
+      remaining: record.credits 
+    };
+  }
+
+  /**
+   * Check credits without using them
+   */
+  checkCredits(apiKey) {
+    const masterKey = process.env.ROMULUS_MASTER_KEY;
+    if (masterKey && apiKey === masterKey) {
+      return { valid: true, credits: Infinity, isMaster: true };
+    }
+
+    const record = this.keys.issued.find(k => k.apiKey === apiKey && k.status === 'active');
+    if (!record) {
+      return { valid: false, error: 'Invalid API key' };
+    }
+
+    return { 
+      valid: true, 
+      credits: record.credits,
+      totalPurchased: record.totalPurchased,
+      totalUsed: record.totalUsed
+    };
+  }
+
+  /**
+   * Validate key exists (for auth check)
    */
   validateKey(apiKey) {
-    // Check master key first (from env)
     const masterKey = process.env.ROMULUS_MASTER_KEY;
     if (masterKey && apiKey === masterKey) {
       return { valid: true, isMaster: true };
     }
 
-    // Check issued keys
     const record = this.keys.issued.find(k => k.apiKey === apiKey && k.status === 'active');
     if (record) {
-      return { valid: true, record };
+      return { valid: true, record, credits: record.credits };
     }
 
-    // Check if revoked
-    const revoked = this.keys.revoked.find(k => k.apiKey === apiKey);
+    const revoked = this.keys.revoked?.find(k => k.apiKey === apiKey);
     if (revoked) {
       return { valid: false, error: 'API key has been revoked' };
     }
@@ -209,40 +280,22 @@ class PaymentGate {
   }
 
   /**
-   * Revoke an API key
-   * @param {string} apiKey 
-   * @returns {{success: boolean, error?: string}}
-   */
-  revokeKey(apiKey, reason = 'manual') {
-    const index = this.keys.issued.findIndex(k => k.apiKey === apiKey);
-    if (index === -1) {
-      return { success: false, error: 'Key not found' };
-    }
-
-    const record = this.keys.issued.splice(index, 1)[0];
-    record.status = 'revoked';
-    record.revokedAt = new Date().toISOString();
-    record.revokeReason = reason;
-    this.keys.revoked.push(record);
-    this.saveKeys();
-
-    return { success: true, message: 'Key revoked' };
-  }
-
-  /**
    * Get pricing info
    */
   getPricing() {
     return {
-      price: ACCESS_PRICE_SOL,
-      currency: 'SOL',
+      creditsPerSOL: CREDITS_PER_SOL,
+      minPurchase: MIN_PURCHASE_SOL,
+      minCredits: MIN_CREDITS,
+      costs: COSTS,
       treasuryWallet: TREASURY_WALLET,
-      description: 'One-time payment for Romulus API access',
+      example: `${MIN_PURCHASE_SOL} SOL = ${MIN_CREDITS} credits = ${MIN_CREDITS} wolf spawns`,
       instructions: [
-        `1. Send ${ACCESS_PRICE_SOL} SOL to ${TREASURY_WALLET}`,
-        '2. Call POST /access/purchase with your tx signature',
-        '3. Receive your API key',
-        '4. Use key in Authorization header for all requests'
+        `1. Send ${MIN_PURCHASE_SOL}+ SOL to ${TREASURY_WALLET}`,
+        '2. Call POST /access/purchase with {"txSignature": "your-tx-sig"}',
+        '3. Receive API key with credits',
+        '4. Each wolf spawn uses 1 credit',
+        '5. Top up anytime by sending more SOL'
       ]
     };
   }
@@ -251,14 +304,16 @@ class PaymentGate {
    * Get stats
    */
   getStats() {
-    const totalRevenue = this.keys.issued.reduce((sum, k) => sum + (k.amountSOL || 0), 0);
+    const totalRevenue = this.keys.issued.reduce((sum, k) => sum + (k.totalPurchased || 0), 0);
+    const totalCreditsUsed = this.keys.issued.reduce((sum, k) => sum + (k.totalUsed || 0), 0);
     return {
       totalKeysIssued: this.keys.issued.length,
       activeKeys: this.keys.issued.filter(k => k.status === 'active').length,
-      revokedKeys: this.keys.revoked.length,
-      totalRevenue: `${totalRevenue.toFixed(4)} SOL`
+      totalRevenue: `${totalRevenue.toFixed(4)} SOL`,
+      totalCreditsUsed,
+      creditsPerSOL: CREDITS_PER_SOL
     };
   }
 }
 
-module.exports = { PaymentGate, TREASURY_WALLET, ACCESS_PRICE_SOL };
+module.exports = { PaymentGate, TREASURY_WALLET, CREDITS_PER_SOL, MIN_PURCHASE_SOL, COSTS };
