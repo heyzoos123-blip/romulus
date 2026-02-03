@@ -30,8 +30,9 @@ const COSTS = {
   agent_hire: 1
 };
 
-// Storage
-const KEYS_FILE = path.join(__dirname, '../data/api-keys.json');
+// Storage - use /data volume in production for persistence
+const DATA_DIR = process.env.RAILWAY_ENVIRONMENT ? '/data' : path.join(__dirname, '../data');
+const KEYS_FILE = path.join(DATA_DIR, 'api-keys.json');
 
 class PaymentGate {
   constructor() {
@@ -39,9 +40,11 @@ class PaymentGate {
   }
 
   loadKeys() {
+    console.log(`[PaymentGate] Loading keys from ${KEYS_FILE}`);
     try {
       if (fs.existsSync(KEYS_FILE)) {
         const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+        console.log(`[PaymentGate] Loaded ${keys.issued?.length || 0} existing keys`);
         
         // Migrate: build walletToKey mapping from existing records
         if (!keys.walletToKey) {
@@ -87,11 +90,16 @@ class PaymentGate {
   }
 
   saveKeys() {
-    const dir = path.dirname(KEYS_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    try {
+      const dir = path.dirname(KEYS_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(KEYS_FILE, JSON.stringify(this.keys, null, 2));
+      console.log(`[PaymentGate] Saved ${this.keys.issued?.length || 0} keys to ${KEYS_FILE}`);
+    } catch (e) {
+      console.error(`[PaymentGate] Failed to save keys: ${e.message}`);
     }
-    fs.writeFileSync(KEYS_FILE, JSON.stringify(this.keys, null, 2));
   }
 
   generateApiKey() {
