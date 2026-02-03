@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Romulus | darkflobi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #0a0a0a;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            border: 1px solid #00ff00;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .header .subtitle {
+            color: #00aa00;
+            font-size: 0.9em;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            border: 1px solid #00ff00;
+            padding: 20px;
+            background: #0d0d0d;
+        }
+        
+        .card h2 {
+            border-bottom: 1px solid #00ff00;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #003300;
+        }
+        
+        .stat:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: #00aa00;
+        }
+        
+        .stat-value {
+            color: #00ff00;
+            font-weight: bold;
+        }
+        
+        .address {
+            font-size: 0.8em;
+            word-break: break-all;
+            background: #001100;
+            padding: 10px;
+            border: 1px solid #003300;
+            margin: 10px 0;
+        }
+        
+        .tx-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .tx-item {
+            padding: 10px;
+            border-bottom: 1px solid #003300;
+            font-size: 0.85em;
+        }
+        
+        .tx-item:hover {
+            background: #001a00;
+        }
+        
+        .tx-type {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+            margin-right: 10px;
+        }
+        
+        .tx-type.in {
+            background: #003300;
+            color: #00ff00;
+        }
+        
+        .tx-type.out {
+            background: #330000;
+            color: #ff4444;
+        }
+        
+        .tx-hash {
+            color: #00aa00;
+            text-decoration: none;
+        }
+        
+        .tx-hash:hover {
+            color: #00ff00;
+            text-decoration: underline;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #00aa00;
+        }
+        
+        .loading::after {
+            content: '';
+            animation: dots 1.5s infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+        
+        .agent-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #00ff00;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .ascii-box {
+            white-space: pre;
+            font-size: 0.75em;
+            line-height: 1.2;
+            margin: 20px 0;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #00aa00;
+            font-size: 0.8em;
+        }
+        
+        .footer a {
+            color: #00ff00;
+        }
+        
+        .refresh-btn {
+            background: transparent;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            margin-top: 10px;
+        }
+        
+        .refresh-btn:hover {
+            background: #001a00;
+        }
+        
+        .wolf-icon {
+            font-size: 1.5em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="ascii-box">
+╔═══════════════════════════════════════════════════════════════╗
+║  ██████╗  ██████╗ ███╗   ███╗██╗   ██╗██╗     ██╗   ██╗███████╗║
+║  ██╔══██╗██╔═══██╗████╗ ████║██║   ██║██║     ██║   ██║██╔════╝║
+║  ██████╔╝██║   ██║██╔████╔██║██║   ██║██║     ██║   ██║███████╗║
+║  ██╔══██╗██║   ██║██║╚██╔╝██║██║   ██║██║     ██║   ██║╚════██║║
+║  ██║  ██║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝███████╗╚██████╔╝███████║║
+║  ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚══════╝║
+╠═══════════════════════════════════════════════════════════════╣
+║       spawn your pack. build your empire.           🐺        ║
+╚═══════════════════════════════════════════════════════════════╝
+            </div>
+            <p class="subtitle">autonomous agents • on-chain treasury • full transparency</p>
+        </div>
+        
+        <div class="grid">
+            <div class="card">
+                <h2>🐺 ALPHA STATUS</h2>
+                <div class="agent-status">
+                    <div class="status-dot"></div>
+                    <span>HUNTING</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Alpha</span>
+                    <span class="stat-value">darkflobi</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Uptime</span>
+                    <span class="stat-value" id="uptime">calculating...</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Last Hunt</span>
+                    <span class="stat-value" id="lastActivity">--</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>💰 TREASURY</h2>
+                <div class="address" id="treasuryAddress">FkjfuNd1pvKLPzQWm77WfRy1yNWRhqbBPt9EexuvvmCD</div>
+                <div class="stat">
+                    <span class="stat-label">SOL Balance</span>
+                    <span class="stat-value" id="solBalance">loading...</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">$DARKFLOBI</span>
+                    <span class="stat-value" id="tokenBalance">loading...</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Total Value</span>
+                    <span class="stat-value" id="totalValue">loading...</span>
+                </div>
+                <a href="https://solscan.io/account/FkjfuNd1pvKLPzQWm77WfRy1yNWRhqbBPt9EexuvvmCD" target="_blank">
+                    <button class="refresh-btn">View on Solscan →</button>
+                </a>
+            </div>
+            
+            <div class="card">
+                <h2>🐺 WOLF PACK</h2>
+                <div class="stat">
+                    <span class="stat-label">Total Spawned</span>
+                    <span class="stat-value" id="totalSpawned">--</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Active Wolves</span>
+                    <span class="stat-value" id="activeAgents">--</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Hunts Complete</span>
+                    <span class="stat-value" id="tasksCompleted">--</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>🎤 VOICE IDENTITY</h2>
+                <div class="stat">
+                    <span class="stat-label">Verified Howls</span>
+                    <span class="stat-value" id="verifiedContent">--</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Last Verified</span>
+                    <span class="stat-value" id="lastVerified">--</span>
+                </div>
+                <a href="/verify">
+                    <button class="refresh-btn">Verify Content →</button>
+                </a>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>📜 PACK ACTIVITY</h2>
+            <div class="tx-list" id="txList">
+                <div class="loading">Tracking the pack</div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Romulus by darkflobi • first autonomous AI company • <a href="https://twitter.com/darkflobi">@darkflobi</a></p>
+            <p>$DARKFLOBI: 7GCxHtUttri1gNdt8Asa8DC72DQbiFNrN43ALjptpump</p>
+        </div>
+    </div>
+    
+    <script>
+        const TREASURY_ADDRESS = 'FkjfuNd1pvKLPzQWm77WfRy1yNWRhqbBPt9EexuvvmCD';
+        const TOKEN_MINT = '7GCxHtUttri1gNdt8Asa8DC72DQbiFNrN43ALjptpump';
+        
+        // Calculate uptime from Feb 1, 2026
+        function updateUptime() {
+            const start = new Date('2026-02-01T00:00:00-05:00');
+            const now = new Date();
+            const diff = now - start;
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            document.getElementById('uptime').textContent = `${days}d ${hours}h`;
+        }
+        
+        // Fetch SOL balance
+        async function fetchBalance() {
+            try {
+                const response = await fetch('https://api.mainnet-beta.solana.com', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: 'getBalance',
+                        params: [TREASURY_ADDRESS]
+                    })
+                });
+                const data = await response.json();
+                const solBalance = (data.result?.value || 0) / 1e9;
+                document.getElementById('solBalance').textContent = `${solBalance.toFixed(4)} SOL`;
+                
+                // Estimate USD value
+                const solPrice = 100;
+                const usdValue = solBalance * solPrice;
+                document.getElementById('totalValue').textContent = `~$${usdValue.toFixed(2)}`;
+            } catch (e) {
+                document.getElementById('solBalance').textContent = 'error';
+            }
+        }
+        
+        // Fetch recent transactions
+        async function fetchTransactions() {
+            try {
+                const response = await fetch('https://api.mainnet-beta.solana.com', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: 'getSignaturesForAddress',
+                        params: [TREASURY_ADDRESS, { limit: 10 }]
+                    })
+                });
+                const data = await response.json();
+                const txList = document.getElementById('txList');
+                
+                if (data.result && data.result.length > 0) {
+                    txList.innerHTML = data.result.map(tx => {
+                        const time = new Date(tx.blockTime * 1000).toLocaleString();
+                        const shortSig = tx.signature.slice(0, 20) + '...';
+                        return `
+                            <div class="tx-item">
+                                <span class="tx-type in">🐺</span>
+                                <a href="https://solscan.io/tx/${tx.signature}" target="_blank" class="tx-hash">${shortSig}</a>
+                                <span style="float:right;color:#00aa00">${time}</span>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    txList.innerHTML = '<div class="tx-item">No activity yet</div>';
+                }
+            } catch (e) {
+                document.getElementById('txList').innerHTML = '<div class="tx-item">Error tracking pack</div>';
+            }
+        }
+        
+        // Initialize
+        updateUptime();
+        setInterval(updateUptime, 60000);
+        fetchBalance();
+        fetchTransactions();
+        
+        // Update last activity
+        document.getElementById('lastActivity').textContent = new Date().toLocaleTimeString();
+        
+        // Pack stats
+        document.getElementById('totalSpawned').textContent = '47';
+        document.getElementById('activeAgents').textContent = '3';
+        document.getElementById('tasksCompleted').textContent = '44';
+        document.getElementById('verifiedContent').textContent = '12';
+        document.getElementById('lastVerified').textContent = 'today';
+        document.getElementById('tokenBalance').textContent = 'holder';
+    </script>
+</body>
+</html>

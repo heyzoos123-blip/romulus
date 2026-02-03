@@ -1,0 +1,29 @@
+{
+  "name": "@romulus/sdk",
+  "version": "0.1.0",
+  "description": "Romulus - Spawn your pack. Build your empire.",
+  "main": "sdk/index.js",
+  "scripts": {
+    "demo": "node examples/darkflobi-agent.js",
+    "spawn": "node scripts/spawn-agent.js"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "romulus",
+    "treasury",
+    "solana",
+    "autonomous",
+    "darkflobi",
+    "wolfpack"
+  ],
+  "author": "darkflobi <@darkflobi>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/darkflobi-industries/romulus"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
