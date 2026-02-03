@@ -117,9 +117,15 @@ class WolfExecutor {
         
         this.conversations.set(wolfId, history);
         
+        // Ensure we have a reply - use tool result summary if no text response
+        let replyText = finalResponse.text || '';
+        if (!replyText.trim() && toolResult) {
+          replyText = toolResult.message || `Used ${response.tool_use.name} successfully.`;
+        }
+        
         return {
           success: true,
-          reply: finalResponse.text,
+          reply: replyText || 'Task completed.',
           toolUsed: response.tool_use.name,
           toolResult: toolResult
         };
