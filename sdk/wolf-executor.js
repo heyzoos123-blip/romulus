@@ -81,8 +81,12 @@ class WolfExecutor {
     // Build system prompt
     const systemPrompt = this.buildSystemPrompt(context);
     
-    // Add user message to history
-    history.push({ role: 'user', content: message });
+    // Add user message to history (skip empty messages)
+    if (message && message.trim()) {
+      history.push({ role: 'user', content: message.trim() });
+    } else {
+      return { success: false, error: 'Empty message' };
+    }
     
     try {
       // Call Claude
@@ -90,22 +94,26 @@ class WolfExecutor {
       
       // Check if wolf wants to use a tool
       if (response.tool_use) {
-        const toolResult = await this.executeTool(response.tool_use);
+        const toolResult = await this.executeTool(response.tool_use, context);
         
-        // Add assistant response and tool result to history
-        history.push({ role: 'assistant', content: response.content });
+        // Add assistant response and tool result to history (only if content exists)
+        if (response.content && response.content.length > 0) {
+          history.push({ role: 'assistant', content: response.content });
+        }
         history.push({ 
           role: 'user', 
           content: [{ 
             type: 'tool_result', 
             tool_use_id: response.tool_use.id,
-            content: JSON.stringify(toolResult)
+            content: JSON.stringify(toolResult) || 'completed'
           }]
         });
         
         // Get final response after tool use
         const finalResponse = await this.callClaude(systemPrompt, history);
-        history.push({ role: 'assistant', content: finalResponse.text });
+        if (finalResponse.text && finalResponse.text.trim()) {
+          history.push({ role: 'assistant', content: finalResponse.text.trim() });
+        }
         
         this.conversations.set(wolfId, history);
         
@@ -118,12 +126,14 @@ class WolfExecutor {
       }
       
       // No tool use, just a regular response
-      history.push({ role: 'assistant', content: response.text });
-      this.conversations.set(wolfId, history);
+      if (response.text && response.text.trim()) {
+        history.push({ role: 'assistant', content: response.text.trim() });
+        this.conversations.set(wolfId, history);
+      }
       
       return {
         success: true,
-        reply: response.text
+        reply: response.text || 'Task completed.'
       };
       
     } catch (e) {
