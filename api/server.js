@@ -30,7 +30,62 @@ const activityFeed = new ActivityFeed();
 const proofAnchor = new ProofAnchor();
 const agentCommerce = new AgentCommerce();
 
-const PORT = process.env.ROMULUS_PORT || 3030;
+const PORT = process.env.PORT || process.env.ROMULUS_PORT || 3030;
+
+// ═══════════════════════════════════════════════════════
+// SECURITY: API Key Authentication
+// ═══════════════════════════════════════════════════════
+const MASTER_API_KEY = process.env.ROMULUS_MASTER_KEY || null;
+const REQUIRE_AUTH = process.env.ROMULUS_REQUIRE_AUTH !== 'false'; // default: true
+
+// Rate limiting for registration (IP -> timestamp[])
+const registrationAttempts = new Map();
+const RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour
+const RATE_LIMIT_MAX = 3; // max 3 registrations per hour per IP
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const attempts = registrationAttempts.get(ip) || [];
+  const recentAttempts = attempts.filter(t => now - t < RATE_LIMIT_WINDOW);
+  registrationAttempts.set(ip, recentAttempts);
+  return recentAttempts.length < RATE_LIMIT_MAX;
+}
+
+function recordAttempt(ip) {
+  const attempts = registrationAttempts.get(ip) || [];
+  attempts.push(Date.now());
+  registrationAttempts.set(ip, attempts);
+}
+
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
+         req.socket?.remoteAddress || 
+         'unknown';
+}
+
+function checkAuth(req) {
+  if (!REQUIRE_AUTH || !MASTER_API_KEY) {
+    return { authorized: true, reason: 'auth_disabled' };
+  }
+  
+  const authHeader = req.headers['authorization'];
+  const apiKeyHeader = req.headers['x-api-key'];
+  
+  // Check Authorization: Bearer <key>
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    if (token === MASTER_API_KEY) {
+      return { authorized: true, reason: 'bearer_token' };
+    }
+  }
+  
+  // Check X-API-Key header
+  if (apiKeyHeader === MASTER_API_KEY) {
+    return { authorized: true, reason: 'api_key_header' };
+  }
+  
+  return { authorized: false, reason: 'invalid_or_missing_key' };
+}
 
 // Initialize services
 const romulus = new RomulusClient();
@@ -40,7 +95,7 @@ function jsonResponse(res, data, status = 200) {
   res.writeHead(status, { 
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'X-Powered-By': 'Romulus/darkflobi 🐺'
+    'X-Powered-By': 'Romulus/darkflobi'
   });
   res.end(JSON.stringify(data, null, 2));
 }
@@ -124,13 +179,34 @@ const routes = {
     jsonResponse(res, { packs, count: packs.length });
   },
 
-  // Register pack
+  // Register pack (PROTECTED + RATE LIMITED)
   'POST /packs/register': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
+      // Rate limit check
+      const clientIP = getClientIP(req);
+      if (!checkRateLimit(clientIP)) {
+        return jsonResponse(res, { 
+          error: 'Rate limit exceeded', 
+          hint: `Max ${RATE_LIMIT_MAX} registrations per hour`
+        }, 429);
+      }
+      
       const body = await parseBody(req);
       if (!body.name) {
         return jsonResponse(res, { error: 'name is required' }, 400);
       }
+      
+      recordAttempt(clientIP);
+      
       const result = romulus.registerPack({
         name: body.name,
         alpha: body.alpha || 'anonymous',
@@ -143,9 +219,18 @@ const routes = {
     }
   },
 
-  // Spawn wolf
+  // Spawn wolf (PROTECTED)
   'POST /wolves/spawn': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.packId) {
         return jsonResponse(res, { error: 'packId is required' }, 400);
@@ -178,9 +263,18 @@ const routes = {
     });
   },
 
-  // Complete hunt
+  // Complete hunt (PROTECTED)
   'POST /hunts/complete': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.wolfId || !body.result) {
         return jsonResponse(res, { error: 'wolfId and result required' }, 400);
@@ -192,14 +286,18 @@ const routes = {
     }
   },
 
-  // Treasury status
+  // Treasury status (sanitized errors)
   'GET /treasury': async (req, res) => {
     try {
       const treasury = await new TreasuryWolf().init();
       const status = await treasury.status();
       jsonResponse(res, status);
     } catch (e) {
-      jsonResponse(res, { error: e.message }, 500);
+      // Don't leak internal paths in error messages
+      jsonResponse(res, { 
+        error: 'Treasury unavailable',
+        hint: 'Treasury wallet not configured'
+      }, 503);
     }
   },
 
@@ -225,9 +323,18 @@ const routes = {
     jsonResponse(res, bounties);
   },
 
-  // Post bounty
+  // Post bounty (PROTECTED)
   'POST /bounties': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.title || !body.description) {
         return jsonResponse(res, { error: 'title and description required' }, 400);
@@ -248,9 +355,18 @@ const routes = {
     }
   },
 
-  // Claim bounty
+  // Claim bounty (PROTECTED)
   'POST /bounties/claim': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.bountyId || !body.wolfId) {
         return jsonResponse(res, { error: 'bountyId and wolfId required' }, 400);
@@ -262,9 +378,18 @@ const routes = {
     }
   },
 
-  // Submit completion
+  // Submit completion (PROTECTED)
   'POST /bounties/submit': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.bountyId || !body.wolfId || !body.proof) {
         return jsonResponse(res, { error: 'bountyId, wolfId, and proof required' }, 400);
@@ -276,9 +401,18 @@ const routes = {
     }
   },
 
-  // Verify completion
+  // Verify completion (PROTECTED)
   'POST /bounties/verify': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.bountyId || body.approved === undefined) {
         return jsonResponse(res, { error: 'bountyId and approved required' }, 400);
@@ -317,9 +451,18 @@ const routes = {
     jsonResponse(res, summary);
   },
 
-  // Log custom event (for external agents)
+  // Log custom event (PROTECTED)
   'POST /activity': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.type || !body.data) {
         return jsonResponse(res, { error: 'type and data required' }, 400);
@@ -349,9 +492,18 @@ const routes = {
     jsonResponse(res, { proofs, count: proofs.length });
   },
 
-  // Anchor proof to Solana
+  // Anchor proof to Solana (PROTECTED - costs SOL)
   'POST /proofs/anchor': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.wolfId || !body.taskType) {
         return jsonResponse(res, { error: 'wolfId and taskType required' }, 400);
@@ -412,9 +564,18 @@ const routes = {
     jsonResponse(res, { agents: agentCommerce.agentDirectory });
   },
 
-  // Register an agent
+  // Register an agent (PROTECTED)
   'POST /commerce/agents': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.agentId || !body.name) {
         return jsonResponse(res, { error: 'agentId and name required' }, 400);
@@ -437,9 +598,18 @@ const routes = {
     jsonResponse(res, { contracts, count: contracts.length });
   },
 
-  // Hire an agent (full flow)
+  // Hire an agent (PROTECTED - involves payments)
   'POST /commerce/hire': async (req, res) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const body = await parseBody(req);
       if (!body.agentId || !body.task || !body.apiEndpoint) {
         return jsonResponse(res, { error: 'agentId, task, and apiEndpoint required' }, 400);
@@ -467,9 +637,18 @@ const routes = {
     }
   },
 
-  // Pay for completed work
+  // Pay for completed work (PROTECTED - sends money!)
   'POST /commerce/pay/:contractId': async (req, res, params) => {
     try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
       const result = await agentCommerce.payAgent(params.contractId);
       
       if (result.success) {
