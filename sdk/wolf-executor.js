@@ -261,6 +261,18 @@ Execute tasks efficiently. Report results clearly. 🐺`;
     };
   }
 
+  // Tool costs (in credits) for premium actions
+  static TOOL_COSTS = {
+    'post_to_moltbook': 3,  // Premium: real posting
+    'post_to_twitter': 5,   // Premium: real posting
+    'search_web': 0,        // Free: basic search
+    'research': 5           // Premium: detailed research
+  };
+
+  getToolCost(toolName) {
+    return WolfExecutor.TOOL_COSTS[toolName] || 0;
+  }
+
   async executeTool(toolUse, context = {}) {
     const { name, input } = toolUse;
     
@@ -271,19 +283,29 @@ Execute tasks efficiently. Report results clearly. 🐺`;
     const ALLOWED_TOOLS = ['post_to_moltbook', 'search_web'];
     if (!ALLOWED_TOOLS.includes(name)) {
       console.warn(`[WOLF-SECURITY] Blocked unknown tool: ${name}`);
-      return { error: `Tool not allowed: ${name}` };
+      return { error: `Tool not allowed: ${name}`, creditCost: 0 };
     }
     
+    // Get cost for this tool
+    const creditCost = this.getToolCost(name);
+    
+    let result;
     switch (name) {
       case 'post_to_moltbook':
-        return await this.postToMoltbook(input.content, input.community);
+        result = await this.postToMoltbook(input.content, input.community);
+        break;
       
       case 'search_web':
-        return await this.searchWeb(input.query);
+        result = await this.searchWeb(input.query);
+        break;
       
       default:
-        return { error: `Unknown tool: ${name}` };
+        return { error: `Unknown tool: ${name}`, creditCost: 0 };
     }
+    
+    // Add credit cost to result
+    result.creditCost = creditCost;
+    return result;
   }
 
   async postToMoltbook(content, community = 'tokenizedai') {

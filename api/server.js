@@ -519,19 +519,39 @@ const routes = {
         return jsonResponse(res, { error: result.error, hint: result.hint }, 500);
       }
       
+      // Charge extra credits for premium tools (master key exempt)
+      let extraCreditsCharged = 0;
+      if (auth.reason !== 'master_key' && result.toolResult?.creditCost > 0) {
+        const extraCost = result.toolResult.creditCost;
+        const extraCharge = paymentGate.useCredits(apiKey, 'wolf_chat', extraCost);
+        if (extraCharge.success) {
+          extraCreditsCharged = extraCost;
+        }
+        // Don't fail if extra charge fails - tool already executed
+      }
+      
       // Log activity
       activityFeed.log('wolf_chat', {
         wolfId: wolfId,
         context: body.context,
-        toolUsed: result.toolUsed
+        toolUsed: result.toolUsed,
+        extraCredits: extraCreditsCharged
       });
+      
+      // Get current balance
+      const balance = paymentGate.checkCredits(apiKey);
       
       jsonResponse(res, {
         success: true,
         wolfId: wolfId,
         reply: result.reply,
         toolUsed: result.toolUsed,
-        toolResult: result.toolResult
+        toolResult: result.toolResult,
+        credits: {
+          used: 1 + extraCreditsCharged,
+          remaining: balance.credits || 0,
+          toolCost: extraCreditsCharged
+        }
       });
       
     } catch (e) {

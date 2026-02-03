@@ -22,12 +22,22 @@ const MIN_PURCHASE_SOL = 0.05; // Minimum purchase
 const MIN_CREDITS = MIN_PURCHASE_SOL * CREDITS_PER_SOL; // 25 credits minimum
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
-// Cost per operation (in credits)
+// Cost per operation (in credits) - Tiered pricing
 const COSTS = {
-  wolf_spawn: 1,
-  bounty_post: 1,
-  proof_anchor: 2,  // on-chain costs more
-  agent_hire: 1
+  // Basic actions
+  wolf_spawn: 1,        // spawn a wolf
+  wolf_chat: 1,         // basic chat message
+  search_web: 1,        // web search
+  
+  // Premium actions (real work)
+  post_moltbook: 3,     // post to moltbook
+  post_twitter: 5,      // post to twitter (coming soon)
+  research_report: 5,   // detailed research
+  
+  // Platform actions
+  bounty_post: 2,
+  proof_anchor: 3,      // on-chain costs more
+  agent_hire: 2
 };
 
 // Storage - use /data volume in production for persistence
@@ -272,9 +282,12 @@ class PaymentGate {
 
   /**
    * Use credits for an operation
+   * @param {string} apiKey - The API key
+   * @param {string} operation - Operation name (for lookup) 
+   * @param {number} customCost - Override cost (optional)
    */
-  useCredits(apiKey, operation = 'wolf_spawn') {
-    const cost = COSTS[operation] || 1;
+  useCredits(apiKey, operation = 'wolf_spawn', customCost = null) {
+    const cost = customCost !== null ? customCost : (COSTS[operation] || 1);
     
     // Master key has unlimited credits
     const masterKey = process.env.ROMULUS_MASTER_KEY;
