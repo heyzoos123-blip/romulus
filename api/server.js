@@ -23,9 +23,11 @@ const { BountyBoard } = require('../sdk/bounty-board');
 const { ActivityFeed } = require('../sdk/activity-feed');
 const { ProofAnchor } = require('../sdk/proof-anchor');
 const { AgentCommerce } = require('../sdk/agent-commerce');
+const { PaymentGate } = require('../sdk/payment-gate');
 
 // Initialize services
 const bountyBoard = new BountyBoard();
+const paymentGate = new PaymentGate();
 const activityFeed = new ActivityFeed();
 const proofAnchor = new ProofAnchor();
 const agentCommerce = new AgentCommerce();
@@ -64,27 +66,37 @@ function getClientIP(req) {
 }
 
 function checkAuth(req) {
-  if (!REQUIRE_AUTH || !MASTER_API_KEY) {
+  if (!REQUIRE_AUTH) {
     return { authorized: true, reason: 'auth_disabled' };
   }
   
   const authHeader = req.headers['authorization'];
   const apiKeyHeader = req.headers['x-api-key'];
   
-  // Check Authorization: Bearer <key>
+  // Extract the key from either header
+  let apiKey = null;
   if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    if (token === MASTER_API_KEY) {
-      return { authorized: true, reason: 'bearer_token' };
-    }
+    apiKey = authHeader.slice(7);
+  } else if (apiKeyHeader) {
+    apiKey = apiKeyHeader;
   }
   
-  // Check X-API-Key header
-  if (apiKeyHeader === MASTER_API_KEY) {
-    return { authorized: true, reason: 'api_key_header' };
+  if (!apiKey) {
+    return { authorized: false, reason: 'missing_key' };
   }
   
-  return { authorized: false, reason: 'invalid_or_missing_key' };
+  // Check master key first
+  if (MASTER_API_KEY && apiKey === MASTER_API_KEY) {
+    return { authorized: true, reason: 'master_key' };
+  }
+  
+  // Check paid keys through PaymentGate
+  const validation = paymentGate.validateKey(apiKey);
+  if (validation.valid) {
+    return { authorized: true, reason: validation.isMaster ? 'master_key' : 'paid_key', record: validation.record };
+  }
+  
+  return { authorized: false, reason: validation.error || 'invalid_key' };
 }
 
 // Initialize services
@@ -126,13 +138,18 @@ const routes = {
       message: 'spawn your pack. build your empire. 🐺',
       endpoints: [
         'GET  /                  - this info',
+        '--- ACCESS (pay to use) ---',
+        'GET  /access/pricing    - get pricing info',
+        'POST /access/purchase   - verify payment & get API key',
+        'GET  /access/stats      - key issuance stats',
+        '--- CORE ---',
         'GET  /stats             - network statistics',
         'GET  /packs             - list all packs',
-        'POST /packs/register    - register new pack',
-        'POST /wolves/spawn      - spawn a wolf',
+        'POST /packs/register    - register new pack (🔑 requires key)',
+        'POST /wolves/spawn      - spawn a wolf (🔑 requires key)',
         'GET  /wolves/:packId    - list pack wolves',
-        'POST /hunts/complete    - complete a hunt',
-        'POST /hunts/prove       - log proof on-chain',
+        'POST /hunts/complete    - complete a hunt (🔑 requires key)',
+        'POST /hunts/prove       - log proof on-chain (🔑 requires key)',
         'GET  /treasury          - treasury status',
         '--- BOUNTY BOARD ---',
         'GET  /bounties          - list open bounties',
@@ -172,6 +189,74 @@ const routes = {
       alpha: 'darkflobi'
     });
   },
+
+  // ═══════════════════════════════════════════════════════
+  // ACCESS / PAYMENT ENDPOINTS (public)
+  // ═══════════════════════════════════════════════════════
+
+  // Get pricing info (PUBLIC)
+  'GET /access/pricing': (req, res) => {
+    const pricing = paymentGate.getPricing();
+    jsonResponse(res, {
+      ...pricing,
+      note: 'One-time payment grants permanent API access',
+      protocol: 'romulus'
+    });
+  },
+
+  // Purchase access - verify payment and issue key (PUBLIC)
+  'POST /access/purchase': async (req, res) => {
+    try {
+      const body = await parseBody(req);
+      
+      if (!body.txSignature) {
+        return jsonResponse(res, { 
+          error: 'txSignature is required',
+          hint: 'Send SOL to treasury, then provide the transaction signature'
+        }, 400);
+      }
+      
+      const result = await paymentGate.processPurchase(
+        body.txSignature,
+        body.payerWallet || 'unknown'
+      );
+      
+      if (!result.success) {
+        // If tx was already used, return the existing key
+        if (result.existingKey) {
+          return jsonResponse(res, {
+            error: result.error,
+            existingKey: result.existingKey,
+            hint: 'This transaction was already used. Here is your existing key.'
+          }, 400);
+        }
+        return jsonResponse(res, { error: result.error }, 400);
+      }
+      
+      // Log the purchase
+      activityFeed.log('api_key_purchased', {
+        payerWallet: body.payerWallet,
+        amountSOL: result.amountPaid
+      });
+      
+      jsonResponse(res, result, 201);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
+  // Access stats (PUBLIC - shows aggregate only)
+  'GET /access/stats': (req, res) => {
+    const stats = paymentGate.getStats();
+    jsonResponse(res, {
+      ...stats,
+      pricing: paymentGate.getPricing()
+    });
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // CORE ENDPOINTS
+  // ═══════════════════════════════════════════════════════
 
   // List packs
   'GET /packs': (req, res) => {

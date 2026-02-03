@@ -4,6 +4,7 @@
   "description": "Romulus - Spawn your pack. Build your empire.",
   "main": "sdk/index.js",
   "scripts": {
+    "start": "node api/server.js",
     "demo": "node examples/darkflobi-agent.js",
     "spawn": "node scripts/spawn-agent.js"
   },
@@ -25,5 +26,8 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0"
   }
 }
