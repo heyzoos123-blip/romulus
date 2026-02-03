@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { ManagedIdentity } = require('./managed-identity');
 
 const PACKS_REGISTRY_PATH = path.join(__dirname, '../../../data/romulus-packs.json');
 
@@ -88,34 +89,61 @@ class RomulusClient {
 
   /**
    * Spawn a wolf for a pack
+   * @param {string} packId - Pack ID or API key
+   * @param {object} wolfConfig - Wolf configuration
+   * @param {boolean} wolfConfig.managedIdentity - Premium: +5 credits for Moltbook identity
+   * @param {string} wolfConfig.wolfName - Name for Moltbook (required if managedIdentity)
    */
-  spawnWolf(packId, wolfConfig) {
+  async spawnWolf(packId, wolfConfig) {
     const pack = this.getPack(packId);
     if (!pack) {
       return { error: 'Pack not found' };
     }
 
     const wolfId = `wolf-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
+    const wolfName = wolfConfig.wolfName || `${pack.name}-wolf-${wolfId.slice(-6)}`;
     
     const wolf = {
       id: wolfId,
       packId: pack.id,
       type: wolfConfig.type || 'custom',
+      name: wolfName,
       task: wolfConfig.task,
       status: 'spawned',
+      managedIdentity: wolfConfig.managedIdentity || false,
+      moltbookRegistered: false,
       spawnedAt: Date.now(),
       completedAt: null,
       result: null
     };
+
+    // Premium tier: Managed Moltbook Identity (+5 credits)
+    let identityResult = null;
+    if (wolfConfig.managedIdentity) {
+      const identityManager = new ManagedIdentity();
+      identityResult = await identityManager.registerWolfIdentity({
+        wolfId,
+        wolfName,
+        description: wolfConfig.description || `${wolf.type} wolf | Pack: ${pack.name} | Task: ${wolf.task}`,
+        packId: pack.id,
+        ownerId: wolfConfig.ownerId || pack.alpha
+      });
+
+      if (identityResult.success) {
+        wolf.moltbookRegistered = true;
+        wolf.moltbookClaimUrl = identityResult.claimUrl;
+      }
+    }
 
     pack.wolves.push(wolf);
     pack.stats.wolvesSpawned++;
     this.registry.totalWolvesSpawned++;
     this.saveRegistry();
 
-    // Return spawn config that can be used with sessions_spawn
-    return {
+    // Build result
+    const result = {
       wolfId,
+      wolfName,
       packId: pack.id,
       packName: pack.name,
       spawnConfig: {
@@ -124,6 +152,19 @@ class RomulusClient {
         model: wolfConfig.model || 'anthropic/claude-sonnet-4'
       }
     };
+
+    // Add managed identity info if premium
+    if (wolfConfig.managedIdentity && identityResult) {
+      result.managedIdentity = {
+        success: identityResult.success,
+        claimUrl: identityResult.claimUrl,
+        apiKey: identityResult.apiKey, // Wolf can use this to post
+        message: identityResult.message || identityResult.error,
+        credits: 5
+      };
+    }
+
+    return result;
   }
 
   /**
@@ -259,20 +300,45 @@ async function main() {
 
     case 'spawn':
       const packId = args[0];
-      const wolfType = args[1] || 'scout';
-      const task = args.slice(2).join(' ') || 'patrol and report';
+      const hasPremium = args.includes('--premium') || args.includes('-p');
+      const filteredArgs = args.filter(a => a !== '--premium' && a !== '-p');
+      const wolfType = filteredArgs[1] || 'scout';
+      const wolfName = hasPremium ? filteredArgs[2] : null;
+      const taskStartIdx = hasPremium ? 3 : 2;
+      const task = filteredArgs.slice(taskStartIdx).join(' ') || 'patrol and report';
+      
       if (!packId) {
-        console.log('Usage: node romulus-client.js spawn <pack-id> <wolf-type> <task>');
+        console.log('Usage: node romulus-client.js spawn <pack-id> <wolf-type> [--premium <wolf-name>] <task>');
         return;
       }
-      const spawnResult = client.spawnWolf(packId, { type: wolfType, task });
+      
+      const spawnResult = await client.spawnWolf(packId, { 
+        type: wolfType, 
+        task,
+        managedIdentity: hasPremium,
+        wolfName: wolfName
+      });
+      
       if (spawnResult.error) {
         console.log(`Error: ${spawnResult.error}`);
       } else {
         console.log('\n🐺 WOLF SPAWNED');
         console.log(`   Wolf ID: ${spawnResult.wolfId}`);
+        console.log(`   Wolf Name: ${spawnResult.wolfName}`);
         console.log(`   Pack: ${spawnResult.packName}`);
         console.log(`   Type: ${wolfType}`);
+        
+        if (spawnResult.managedIdentity) {
+          console.log('\n   📛 MANAGED IDENTITY (+5 credits)');
+          if (spawnResult.managedIdentity.success) {
+            console.log(`   ✓ Registered on Moltbook!`);
+            console.log(`   Claim URL: ${spawnResult.managedIdentity.claimUrl}`);
+            console.log(`   API Key: ${spawnResult.managedIdentity.apiKey?.slice(0, 12)}...`);
+          } else {
+            console.log(`   ✗ Registration failed: ${spawnResult.managedIdentity.message}`);
+          }
+        }
+        
         console.log(`\n   Spawn config for sessions_spawn:`);
         console.log(JSON.stringify(spawnResult.spawnConfig, null, 2));
       }
@@ -310,16 +376,24 @@ async function main() {
 🐺 ROMULUS CLIENT - Multi-Pack Infrastructure
 
 Commands:
-  init                              Initialize genesis pack (darkflobi)
-  register <name> [alpha]           Register a new pack
-  spawn <pack-id> <type> <task>     Spawn a wolf for a pack
-  stats                             Show network statistics
-  list                              List all registered packs
+  init                                Initialize genesis pack (darkflobi)
+  register <name> [alpha]             Register a new pack
+  spawn <pack-id> <type> <task>       Spawn a wolf for a pack
+  spawn <pack-id> <type> --premium <wolf-name> <task>
+                                      Spawn with Moltbook identity (+5 credits)
+  stats                               Show network statistics
+  list                                List all registered packs
 
 Example:
   node romulus-client.js init
   node romulus-client.js register "my-agent" "AgentX"
   node romulus-client.js spawn pack-xyz scout "patrol twitter"
+  node romulus-client.js spawn pack-xyz scout --premium "ScoutWolf" "patrol twitter"
+
+Premium tier (+5 credits):
+  - Auto-register wolf on Moltbook
+  - Wolf can post immediately with its own identity
+  - User gets claim URL to take ownership (optional)
 
 Other agents can use Romulus to spawn their own wolf packs.
 darkflobi is the protocol. 🐺

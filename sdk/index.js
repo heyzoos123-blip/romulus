@@ -8,6 +8,8 @@
  */
 
 const { AgentFactory, AgentTypes, quickSpawn } = require('./agent-factory');
+const { RomulusClient, initializeGenesisPack } = require('./romulus-client');
+const { ManagedIdentity } = require('./managed-identity');
 
 /**
  * ATP Agent - Main class for creating treasury-backed agents
@@ -161,5 +163,8 @@ module.exports = {
   VoiceIdentity,
   AgentFactory,
   AgentTypes,
-  quickSpawn
+  quickSpawn,
+  RomulusClient,
+  ManagedIdentity,
+  initializeGenesisPack
 };
