@@ -107,6 +107,7 @@ function jsonResponse(res, data, status = 200) {
   res.writeHead(status, { 
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
     'X-Powered-By': 'Romulus/darkflobi'
   });
   res.end(JSON.stringify(data, null, 2));
@@ -874,7 +875,7 @@ async function handleRequest(req, res) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key'
     });
     return res.end();
   }
