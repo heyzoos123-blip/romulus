@@ -485,11 +485,18 @@ const routes = {
         return jsonResponse(res, { error: 'message is required' }, 400);
       }
       
-      // Get API key for credit deduction (only charge for new tasks, not follow-ups)
+      // Security: Validate wolfId format
+      const wolfId = body.wolfId || 'wolf-' + Date.now();
+      if (!/^wolf-[a-zA-Z0-9-]+$/.test(wolfId)) {
+        return jsonResponse(res, { error: 'Invalid wolfId format' }, 400);
+      }
+      
+      // Get API key for credit deduction
       const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
       
-      // If this is a new task (not a follow-up), charge credits
-      if (body.context === 'wolf_task' && !body.noCharge) {
+      // Charge 1 credit per chat message (prevents abuse)
+      // Master key is exempt
+      if (auth.reason !== 'master_key') {
         const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn');
         if (!creditResult.success) {
           return jsonResponse(res, { 
@@ -501,11 +508,11 @@ const routes = {
         }
       }
       
-      // Execute the task
-      const wolfId = body.wolfId || 'wolf-' + Date.now();
+      // Execute the task with rate limiting context
       const result = await wolfExecutor.execute(wolfId, body.message, {
         context: body.context || 'chat',
-        originalTask: body.originalTask
+        originalTask: body.originalTask,
+        apiKey: apiKey // For rate limiting
       });
       
       if (!result.success) {

@@ -12,9 +12,36 @@ const CLAUDE_MODEL = process.env.WOLF_MODEL || 'claude-sonnet-4-20250514';
 // Moltbook API for posting
 const MOLTBOOK_API = 'https://www.moltbook.com/api';
 
+// Security limits
+const MAX_MESSAGE_LENGTH = 2000;
+const MAX_MESSAGES_PER_WOLF = 20; // Max conversation length
+const MAX_WOLVES_PER_HOUR = 10; // Rate limit per API key
+
 class WolfExecutor {
   constructor() {
     this.conversations = new Map(); // wolfId -> message history
+    this.rateLimits = new Map(); // apiKey -> { count, resetTime }
+  }
+
+  /**
+   * Check rate limit for an API key
+   */
+  checkRateLimit(apiKey) {
+    const now = Date.now();
+    const hourMs = 60 * 60 * 1000;
+    
+    let limit = this.rateLimits.get(apiKey);
+    if (!limit || now > limit.resetTime) {
+      limit = { count: 0, resetTime: now + hourMs };
+    }
+    
+    if (limit.count >= MAX_WOLVES_PER_HOUR) {
+      return { allowed: false, error: `Rate limit: max ${MAX_WOLVES_PER_HOUR} wolf chats per hour` };
+    }
+    
+    limit.count++;
+    this.rateLimits.set(apiKey, limit);
+    return { allowed: true };
   }
 
   /**
@@ -29,8 +56,27 @@ class WolfExecutor {
       };
     }
 
+    // Security: Check rate limit
+    if (context.apiKey) {
+      const rateCheck = this.checkRateLimit(context.apiKey);
+      if (!rateCheck.allowed) {
+        return { success: false, error: rateCheck.error };
+      }
+    }
+
+    // Security: Limit message length
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      message = message.slice(0, MAX_MESSAGE_LENGTH) + '... [truncated]';
+    }
+
     // Get or create conversation history
     let history = this.conversations.get(wolfId) || [];
+    
+    // Security: Limit conversation length
+    if (history.length >= MAX_MESSAGES_PER_WOLF * 2) {
+      // Keep system context but trim old messages
+      history = history.slice(-10);
+    }
     
     // Build system prompt
     const systemPrompt = this.buildSystemPrompt(context);
@@ -199,8 +245,18 @@ Execute tasks efficiently. Report results clearly. 🐺`;
     };
   }
 
-  async executeTool(toolUse) {
+  async executeTool(toolUse, context = {}) {
     const { name, input } = toolUse;
+    
+    // Security: Log all tool usage for audit
+    console.log(`[WOLF-TOOL] ${new Date().toISOString()} | tool=${name} | apiKey=${context.apiKey?.slice(0,10)}... | input=${JSON.stringify(input).slice(0,100)}`);
+    
+    // Security: Allowlist of safe tools only
+    const ALLOWED_TOOLS = ['post_to_moltbook', 'search_web'];
+    if (!ALLOWED_TOOLS.includes(name)) {
+      console.warn(`[WOLF-SECURITY] Blocked unknown tool: ${name}`);
+      return { error: `Tool not allowed: ${name}` };
+    }
     
     switch (name) {
       case 'post_to_moltbook':
