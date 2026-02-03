@@ -22,11 +22,13 @@ const { TreasuryWolf } = require('../scripts/treasury-wolf');
 const { BountyBoard } = require('../sdk/bounty-board');
 const { ActivityFeed } = require('../sdk/activity-feed');
 const { ProofAnchor } = require('../sdk/proof-anchor');
+const { AgentCommerce } = require('../sdk/agent-commerce');
 
 // Initialize services
 const bountyBoard = new BountyBoard();
 const activityFeed = new ActivityFeed();
 const proofAnchor = new ProofAnchor();
+const agentCommerce = new AgentCommerce();
 
 const PORT = process.env.ROMULUS_PORT || 3030;
 
@@ -94,7 +96,14 @@ const routes = {
         'GET  /proofs/stats      - proof statistics',
         'POST /proofs/anchor     - anchor work to solana',
         'GET  /proofs/verify/:tx - verify on-chain',
-        'GET  /proofs/wolf/:id   - proofs by wolf'
+        'GET  /proofs/wolf/:id   - proofs by wolf',
+        '--- AGENT COMMERCE ---',
+        'GET  /commerce/stats    - commerce statistics',
+        'GET  /commerce/agents   - known agents',
+        'POST /commerce/agents   - register agent',
+        'GET  /commerce/contracts - recent contracts',
+        'POST /commerce/hire     - hire an agent',
+        'POST /commerce/pay/:id  - pay for work'
       ]
     });
   },
@@ -386,6 +395,91 @@ const routes = {
   'GET /proofs/wolf/:wolfId': (req, res, params) => {
     const proofs = proofAnchor.getWolfProofs(params.wolfId);
     jsonResponse(res, { wolfId: params.wolfId, proofs, count: proofs.length });
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // AGENT-TO-AGENT COMMERCE
+  // ═══════════════════════════════════════════════════════
+
+  // Commerce stats
+  'GET /commerce/stats': (req, res) => {
+    const stats = agentCommerce.getStats();
+    jsonResponse(res, stats);
+  },
+
+  // Known agents directory
+  'GET /commerce/agents': (req, res) => {
+    jsonResponse(res, { agents: agentCommerce.agentDirectory });
+  },
+
+  // Register an agent
+  'POST /commerce/agents': async (req, res) => {
+    try {
+      const body = await parseBody(req);
+      if (!body.agentId || !body.name) {
+        return jsonResponse(res, { error: 'agentId and name required' }, 400);
+      }
+      const result = agentCommerce.registerAgent(body.agentId, {
+        name: body.name,
+        api: body.api,
+        capabilities: body.capabilities,
+        wallet: body.wallet
+      });
+      jsonResponse(res, result, 201);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 400);
+    }
+  },
+
+  // Recent contracts
+  'GET /commerce/contracts': (req, res) => {
+    const contracts = agentCommerce.getContracts(20);
+    jsonResponse(res, { contracts, count: contracts.length });
+  },
+
+  // Hire an agent (full flow)
+  'POST /commerce/hire': async (req, res) => {
+    try {
+      const body = await parseBody(req);
+      if (!body.agentId || !body.task || !body.apiEndpoint) {
+        return jsonResponse(res, { error: 'agentId, task, and apiEndpoint required' }, 400);
+      }
+      
+      const result = await agentCommerce.hireAgent(
+        body.agentId,
+        body.task,
+        body.payment || 0,
+        body.apiEndpoint,
+        body.requestPayload
+      );
+
+      // Log to activity feed
+      activityFeed.log('agent_hired', {
+        provider: body.agentId,
+        task: body.task,
+        payment: body.payment || 0,
+        success: result.success
+      });
+
+      jsonResponse(res, result, result.success ? 200 : 500);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
+  // Pay for completed work
+  'POST /commerce/pay/:contractId': async (req, res, params) => {
+    try {
+      const result = await agentCommerce.payAgent(params.contractId);
+      
+      if (result.success) {
+        activityFeed.treasuryTransaction('agent_payment', result.payment?.amount, result.payment?.txSignature);
+      }
+      
+      jsonResponse(res, result, result.success ? 200 : 400);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
   }
 };
 
