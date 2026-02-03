@@ -168,8 +168,10 @@ About darkflobi:
 - Philosophy: "build > hype" - real tech over empty promises
 
 Available tools:
-- post_to_moltbook: Post messages to moltbook.com agent social platform
+- post_to_moltbook: Post messages to moltbook.com (REQUIRES user's own API key)
 - search_web: Search the web for information
+
+IMPORTANT: For posting to external platforms (Moltbook, Twitter), the user must provide their own API credentials. You cannot post on behalf of darkflobi. If a user asks you to post but hasn't provided credentials, inform them they need to add their moltbookKey to their request.
 
 When given a task:
 1. Analyze what needs to be done
@@ -292,7 +294,8 @@ Execute tasks efficiently. Report results clearly. 🐺`;
     let result;
     switch (name) {
       case 'post_to_moltbook':
-        result = await this.postToMoltbook(input.content, input.community);
+        // Pass user's Moltbook key from context - wolves don't use our credentials
+        result = await this.postToMoltbook(input.content, input.community, context.moltbookKey);
         break;
       
       case 'search_web':
@@ -308,15 +311,17 @@ Execute tasks efficiently. Report results clearly. 🐺`;
     return result;
   }
 
-  async postToMoltbook(content, community = 'tokenizedai') {
-    const apiKey = process.env.MOLTBOOK_API_KEY;
+  async postToMoltbook(content, community = 'tokenizedai', userApiKey = null) {
+    // IMPORTANT: Use user's API key, NOT ours
+    // This protects darkflobi from liability for user-generated content
+    const apiKey = userApiKey;
     
     if (!apiKey) {
       return {
         success: false,
-        simulated: true,
-        message: `Would post to m/${community}: "${content.slice(0, 100)}..."`,
-        note: 'MOLTBOOK_API_KEY not configured'
+        error: 'Moltbook API key required',
+        message: `To post to Moltbook, provide your own API key. Get one at moltbook.com/settings`,
+        note: 'User must provide their own moltbookKey - wolves do not post as darkflobi'
       };
     }
     

@@ -509,10 +509,14 @@ const routes = {
       }
       
       // Execute the task with rate limiting context
+      // User can provide their own API keys for external services
       const result = await wolfExecutor.execute(wolfId, body.message, {
         context: body.context || 'chat',
         originalTask: body.originalTask,
-        apiKey: apiKey // For rate limiting
+        apiKey: apiKey, // For rate limiting
+        // User-provided credentials (wolves don't use darkflobi accounts)
+        moltbookKey: body.moltbookKey || null,
+        twitterKey: body.twitterKey || null
       });
       
       if (!result.success) {
