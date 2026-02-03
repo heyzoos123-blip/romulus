@@ -24,8 +24,10 @@ const { ActivityFeed } = require('../sdk/activity-feed');
 const { ProofAnchor } = require('../sdk/proof-anchor');
 const { AgentCommerce } = require('../sdk/agent-commerce');
 const { PaymentGate } = require('../sdk/payment-gate');
+const { WolfExecutor } = require('../sdk/wolf-executor');
 
 // Initialize services
+const wolfExecutor = new WolfExecutor();
 const bountyBoard = new BountyBoard();
 const paymentGate = new PaymentGate();
 const activityFeed = new ActivityFeed();
@@ -150,6 +152,7 @@ const routes = {
         'GET  /packs             - list all packs',
         'POST /packs/register    - register new pack (🔑 requires key)',
         'POST /wolves/spawn      - spawn a wolf (🔑 requires key)',
+        'POST /wolves/chat       - chat with wolf / execute tasks (🔑)',
         'GET  /wolves/:packId    - list pack wolves',
         'POST /hunts/complete    - complete a hunt (🔑 requires key)',
         'POST /hunts/prove       - log proof on-chain (🔑 requires key)',
@@ -463,6 +466,70 @@ const routes = {
       wolves: pack.wolves,
       count: pack.wolves.length
     });
+  },
+
+  // Wolf Chat - Execute tasks and have conversations with wolves (PROTECTED + COSTS CREDITS)
+  'POST /wolves/chat': async (req, res) => {
+    try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
+      const body = await parseBody(req);
+      if (!body.message) {
+        return jsonResponse(res, { error: 'message is required' }, 400);
+      }
+      
+      // Get API key for credit deduction (only charge for new tasks, not follow-ups)
+      const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
+      
+      // If this is a new task (not a follow-up), charge credits
+      if (body.context === 'wolf_task' && !body.noCharge) {
+        const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn');
+        if (!creditResult.success) {
+          return jsonResponse(res, { 
+            error: creditResult.error,
+            credits: creditResult.credits,
+            needed: creditResult.needed,
+            hint: 'Top up at POST /access/purchase'
+          }, 402);
+        }
+      }
+      
+      // Execute the task
+      const wolfId = body.wolfId || 'wolf-' + Date.now();
+      const result = await wolfExecutor.execute(wolfId, body.message, {
+        context: body.context || 'chat',
+        originalTask: body.originalTask
+      });
+      
+      if (!result.success) {
+        return jsonResponse(res, { error: result.error, hint: result.hint }, 500);
+      }
+      
+      // Log activity
+      activityFeed.log('wolf_chat', {
+        wolfId: wolfId,
+        context: body.context,
+        toolUsed: result.toolUsed
+      });
+      
+      jsonResponse(res, {
+        success: true,
+        wolfId: wolfId,
+        reply: result.reply,
+        toolUsed: result.toolUsed,
+        toolResult: result.toolResult
+      });
+      
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
   },
 
   // Complete hunt (PROTECTED)
