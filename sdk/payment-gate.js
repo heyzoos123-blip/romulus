@@ -41,12 +41,49 @@ class PaymentGate {
   loadKeys() {
     try {
       if (fs.existsSync(KEYS_FILE)) {
-        return JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+        const keys = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+        
+        // Migrate: build walletToKey mapping from existing records
+        if (!keys.walletToKey) {
+          keys.walletToKey = {};
+          let migrated = 0;
+          for (const record of (keys.issued || [])) {
+            if (record.payerWallet && record.payerWallet !== 'unknown' && record.status === 'active') {
+              keys.walletToKey[record.payerWallet] = record.apiKey;
+              migrated++;
+            }
+          }
+          if (migrated > 0) {
+            console.log(`[PaymentGate] Migrated ${migrated} wallet→key mappings`);
+            // Save the migration
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+          }
+        }
+        
+        // Migrate: build txToKey mapping from txHistory
+        if (!keys.txToKey) {
+          keys.txToKey = {};
+          let migrated = 0;
+          for (const record of (keys.issued || [])) {
+            if (record.txHistory) {
+              for (const tx of record.txHistory) {
+                keys.txToKey[tx] = record.apiKey;
+                migrated++;
+              }
+            }
+          }
+          if (migrated > 0) {
+            console.log(`[PaymentGate] Migrated ${migrated} tx→key mappings`);
+            fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+          }
+        }
+        
+        return keys;
       }
     } catch (e) {
       console.error('Error loading keys:', e.message);
     }
-    return { issued: [], revoked: [], transactions: [] };
+    return { issued: [], revoked: [], transactions: [], walletToKey: {}, txToKey: {} };
   }
 
   saveKeys() {
@@ -64,6 +101,7 @@ class PaymentGate {
 
   /**
    * Verify a SOL payment transaction
+   * Returns: { valid, amountSOL, payerWallet }
    */
   async verifyPayment(txSignature) {
     try {
@@ -109,12 +147,18 @@ class PaymentGate {
       const accountKeys = tx.transaction?.message?.accountKeys || [];
 
       let treasuryIndex = -1;
+      let payerWallet = null;
+      
       for (let i = 0; i < accountKeys.length; i++) {
         const key = accountKeys[i]?.pubkey || accountKeys[i];
         if (key === TREASURY_WALLET) {
           treasuryIndex = i;
-          break;
         }
+      }
+      
+      // First signer is typically the payer
+      if (accountKeys.length > 0) {
+        payerWallet = accountKeys[0]?.pubkey || accountKeys[0];
       }
 
       if (treasuryIndex === -1) {
@@ -131,7 +175,7 @@ class PaymentGate {
         };
       }
 
-      return { valid: true, amountSOL };
+      return { valid: true, amountSOL, payerWallet };
 
     } catch (e) {
       return { valid: false, error: `Verification failed: ${e.message}` };
@@ -139,28 +183,41 @@ class PaymentGate {
   }
 
   /**
-   * Purchase credits or create new key
+   * Purchase credits - wallet is the identity
+   * Same wallet always maps to same API key (auto top-up)
    */
-  async purchaseCredits(txSignature, payerWallet, existingApiKey = null) {
+  async purchaseCredits(txSignature, _payerWalletIgnored = null, _existingApiKeyIgnored = null) {
     const verification = await this.verifyPayment(txSignature);
     
     if (!verification.valid) {
       return { success: false, error: verification.error };
     }
 
+    const payerWallet = verification.payerWallet;
+    if (!payerWallet) {
+      return { success: false, error: 'Could not determine payer wallet from transaction' };
+    }
+
     const creditsToAdd = Math.floor(verification.amountSOL * CREDITS_PER_SOL);
     
-    // Record transaction
+    // Initialize mappings
     if (!this.keys.transactions) this.keys.transactions = [];
+    if (!this.keys.txToKey) this.keys.txToKey = {};
+    if (!this.keys.walletToKey) this.keys.walletToKey = {};
     this.keys.transactions.push(txSignature);
 
-    // If existing key provided, add credits to it
+    // Check if wallet already has a key (auto top-up)
+    const existingApiKey = this.keys.walletToKey[payerWallet];
     if (existingApiKey) {
       const record = this.keys.issued.find(k => k.apiKey === existingApiKey && k.status === 'active');
       if (record) {
         record.credits += creditsToAdd;
         record.totalPurchased = (record.totalPurchased || 0) + verification.amountSOL;
         record.lastTopUp = new Date().toISOString();
+        if (!record.txHistory) record.txHistory = [];
+        record.txHistory.push(txSignature);
+        // Map this tx to the key for recovery
+        this.keys.txToKey[txSignature] = existingApiKey;
         this.saveKeys();
         
         return {
@@ -169,23 +226,29 @@ class PaymentGate {
           creditsAdded: creditsToAdd,
           totalCredits: record.credits,
           amountPaid: verification.amountSOL,
+          wallet: payerWallet,
           message: `Added ${creditsToAdd} credits to your account 🐺`
         };
       }
     }
 
-    // Create new key with credits
+    // New wallet - create new key
     const apiKey = this.generateApiKey();
     const keyRecord = {
       apiKey,
-      payerWallet: payerWallet || 'unknown',
+      payerWallet,
       credits: creditsToAdd,
       totalPurchased: verification.amountSOL,
       totalUsed: 0,
       issuedAt: new Date().toISOString(),
-      status: 'active'
+      status: 'active',
+      txHistory: [txSignature]
     };
 
+    // Map tx and wallet to key for recovery
+    this.keys.txToKey[txSignature] = apiKey;
+    this.keys.walletToKey[payerWallet] = apiKey;
+    
     this.keys.issued.push(keyRecord);
     this.saveKeys();
 
@@ -194,6 +257,7 @@ class PaymentGate {
       apiKey,
       credits: creditsToAdd,
       amountPaid: verification.amountSOL,
+      wallet: payerWallet,
       message: `Welcome to the pack. ${creditsToAdd} credits loaded. 🐺`
     };
   }
@@ -277,6 +341,129 @@ class PaymentGate {
     }
 
     return { valid: false, error: 'Invalid API key' };
+  }
+
+  /**
+   * Recover API key from transaction signature
+   * We fetch the tx on-chain to get the payer wallet, then return their key
+   */
+  async recoverKey(txSignature) {
+    // First check direct tx mapping (fast path)
+    if (this.keys.txToKey && this.keys.txToKey[txSignature]) {
+      const apiKey = this.keys.txToKey[txSignature];
+      const record = this.keys.issued.find(k => k.apiKey === apiKey);
+      
+      if (!record) {
+        return { success: false, error: 'Key record not found (may have been revoked)' };
+      }
+      
+      if (record.status !== 'active') {
+        return { success: false, error: 'This API key has been revoked' };
+      }
+      
+      return {
+        success: true,
+        apiKey: record.apiKey,
+        credits: record.credits,
+        totalPurchased: record.totalPurchased,
+        wallet: record.payerWallet,
+        message: 'Key recovered. Welcome back 🐺'
+      };
+    }
+    
+    // Fetch tx from chain to get the wallet
+    try {
+      const response = await fetch('https://api.mainnet-beta.solana.com', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTransaction',
+          params: [
+            txSignature,
+            { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      
+      if (!data.result) {
+        return { success: false, error: 'Transaction not found on-chain' };
+      }
+
+      // Get payer wallet from tx
+      const accountKeys = data.result.transaction?.message?.accountKeys || [];
+      const payerWallet = accountKeys[0]?.pubkey || accountKeys[0];
+      
+      if (!payerWallet) {
+        return { success: false, error: 'Could not determine wallet from transaction' };
+      }
+      
+      // Look up by wallet
+      if (this.keys.walletToKey && this.keys.walletToKey[payerWallet]) {
+        const apiKey = this.keys.walletToKey[payerWallet];
+        const record = this.keys.issued.find(k => k.apiKey === apiKey);
+        
+        if (record && record.status === 'active') {
+          // Update mappings for future
+          if (!this.keys.txToKey) this.keys.txToKey = {};
+          this.keys.txToKey[txSignature] = apiKey;
+          this.saveKeys();
+          
+          return {
+            success: true,
+            apiKey: record.apiKey,
+            credits: record.credits,
+            totalPurchased: record.totalPurchased,
+            wallet: payerWallet,
+            message: 'Key recovered. Welcome back 🐺'
+          };
+        }
+      }
+      
+      // Wallet not in our system
+      return { 
+        success: false, 
+        error: `No API key found for wallet ${payerWallet.slice(0,8)}...${payerWallet.slice(-4)}. Have you purchased credits?` 
+      };
+      
+    } catch (e) {
+      return { success: false, error: `Recovery failed: ${e.message}` };
+    }
+  }
+  
+  /**
+   * Recover by wallet address directly (alternative method)
+   */
+  recoverByWallet(walletAddress) {
+    if (!this.keys.walletToKey) {
+      return { success: false, error: 'No wallet mappings found' };
+    }
+    
+    const apiKey = this.keys.walletToKey[walletAddress];
+    if (!apiKey) {
+      return { success: false, error: 'No API key found for this wallet' };
+    }
+    
+    const record = this.keys.issued.find(k => k.apiKey === apiKey);
+    if (!record) {
+      return { success: false, error: 'Key record not found' };
+    }
+    
+    if (record.status !== 'active') {
+      return { success: false, error: 'This API key has been revoked' };
+    }
+    
+    return {
+      success: true,
+      apiKey: record.apiKey,
+      credits: record.credits,
+      totalPurchased: record.totalPurchased,
+      wallet: walletAddress,
+      message: 'Key recovered. Welcome back 🐺'
+    };
   }
 
   /**

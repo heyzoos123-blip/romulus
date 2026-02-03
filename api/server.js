@@ -141,6 +141,7 @@ const routes = {
         '--- ACCESS (pay to use) ---',
         'GET  /access/pricing    - get pricing & credit costs',
         'POST /access/purchase   - buy credits (0.05 SOL = 50 credits)',
+        'POST /access/recover    - recover lost API key with payment txn',
         'GET  /access/balance    - check your credit balance (🔑)',
         'GET  /access/stats      - public stats',
         '--- CORE ---',
@@ -265,6 +266,36 @@ const routes = {
       isMaster: balance.isMaster || false,
       costs: paymentGate.getPricing().costs
     });
+  },
+
+  // Recover lost API key using payment transaction OR wallet address (PUBLIC)
+  'POST /access/recover': async (req, res) => {
+    try {
+      const body = await parseBody(req);
+      
+      // Can recover by tx OR by wallet
+      if (!body.txSignature && !body.wallet) {
+        return jsonResponse(res, { 
+          error: 'txSignature or wallet is required',
+          hint: 'Provide either a payment transaction signature or your wallet address'
+        }, 400);
+      }
+      
+      let result;
+      if (body.txSignature) {
+        result = await paymentGate.recoverKey(body.txSignature);
+      } else {
+        result = paymentGate.recoverByWallet(body.wallet);
+      }
+      
+      if (!result.success) {
+        return jsonResponse(res, { error: result.error }, 404);
+      }
+      
+      jsonResponse(res, result);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
   },
 
   // Access stats (PUBLIC - shows aggregate only)
