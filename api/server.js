@@ -298,6 +298,51 @@ const routes = {
     }
   },
 
+  // Admin: manually issue key for a wallet (MASTER KEY ONLY)
+  'POST /access/admin/issue': async (req, res) => {
+    try {
+      // Must use master key
+      const auth = checkAuth(req);
+      if (!auth.authorized || auth.reason !== 'master_key') {
+        return jsonResponse(res, { error: 'Master key required' }, 403);
+      }
+      
+      const body = await parseBody(req);
+      if (!body.wallet || !body.credits) {
+        return jsonResponse(res, { error: 'wallet and credits required' }, 400);
+      }
+      
+      // Directly issue a key
+      const apiKey = paymentGate.generateApiKey();
+      const keyRecord = {
+        apiKey,
+        payerWallet: body.wallet,
+        credits: body.credits,
+        totalPurchased: 0,
+        totalUsed: 0,
+        issuedAt: new Date().toISOString(),
+        status: 'active',
+        txHistory: [],
+        issuedBy: 'admin'
+      };
+      
+      if (!paymentGate.keys.walletToKey) paymentGate.keys.walletToKey = {};
+      paymentGate.keys.walletToKey[body.wallet] = apiKey;
+      paymentGate.keys.issued.push(keyRecord);
+      paymentGate.saveKeys();
+      
+      jsonResponse(res, {
+        success: true,
+        apiKey,
+        wallet: body.wallet,
+        credits: body.credits,
+        message: 'Key issued by admin 🐺'
+      }, 201);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
   // Access stats (PUBLIC - shows aggregate only)
   'GET /access/stats': (req, res) => {
     const stats = paymentGate.getStats();
