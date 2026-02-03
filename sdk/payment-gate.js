@@ -16,10 +16,10 @@ const path = require('path');
 // Treasury wallet - payments must be sent here
 const TREASURY_WALLET = 'FkjfuNd1pvKLPzQWm77WfRy1yNWRhqbBPt9EexuvvmCD';
 
-// Pricing
-const CREDITS_PER_SOL = 1000;  // 1 SOL = 1000 credits
+// Pricing (optimized for profit)
+const CREDITS_PER_SOL = 500;   // 1 SOL = 500 credits ($0.40/spawn at $200 SOL)
 const MIN_PURCHASE_SOL = 0.05; // Minimum purchase
-const MIN_CREDITS = MIN_PURCHASE_SOL * CREDITS_PER_SOL; // 50 credits minimum
+const MIN_CREDITS = MIN_PURCHASE_SOL * CREDITS_PER_SOL; // 25 credits minimum
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
 // Cost per operation (in credits)
@@ -289,7 +289,7 @@ class PaymentGate {
       minCredits: MIN_CREDITS,
       costs: COSTS,
       treasuryWallet: TREASURY_WALLET,
-      example: `${MIN_PURCHASE_SOL} SOL = ${MIN_CREDITS} credits = ${MIN_CREDITS} wolf spawns`,
+      example: `${MIN_PURCHASE_SOL} SOL = ${MIN_CREDITS} credits = ${MIN_CREDITS} wolf spawns (~$0.40/spawn)`,
       instructions: [
         `1. Send ${MIN_PURCHASE_SOL}+ SOL to ${TREASURY_WALLET}`,
         '2. Call POST /access/purchase with {"txSignature": "your-tx-sig"}',
