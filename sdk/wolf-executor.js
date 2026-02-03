@@ -287,44 +287,55 @@ Execute tasks efficiently. Report results clearly. 🐺`;
   }
 
   async postToMoltbook(content, community = 'tokenizedai') {
+    const apiKey = process.env.MOLTBOOK_API_KEY;
+    
+    if (!apiKey) {
+      return {
+        success: false,
+        simulated: true,
+        message: `Would post to m/${community}: "${content.slice(0, 100)}..."`,
+        note: 'MOLTBOOK_API_KEY not configured'
+      };
+    }
+    
     try {
-      // Moltbook API call
-      const response = await fetch(`${MOLTBOOK_API}/posts`, {
+      // Real Moltbook API call
+      const response = await fetch(`https://www.moltbook.com/api/v1/submolts/${community}/posts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.MOLTBOOK_API_KEY || ''}`
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          content: content.slice(0, 500),
-          community: community
+          content: content.slice(0, 500)
         })
       });
       
+      const data = await response.json();
+      
       if (!response.ok) {
-        // If API fails, return a simulated success for now
+        console.error('[MOLTBOOK] Post failed:', data);
         return {
-          success: true,
-          simulated: true,
-          message: `Would post to m/${community}: "${content.slice(0, 100)}..."`,
-          note: 'Moltbook API integration pending - message logged for manual posting'
+          success: false,
+          error: data.error || 'Post failed',
+          message: `Failed to post to m/${community}`
         };
       }
       
-      const data = await response.json();
+      console.log('[MOLTBOOK] Posted successfully:', data);
       return {
         success: true,
-        postId: data.id,
-        url: data.url || `https://moltbook.com/m/${community}`,
-        message: 'Posted successfully to moltbook'
+        postId: data.id || data.post_id,
+        url: data.url || `https://moltbook.com/m/${community}/${data.id || data.post_id}`,
+        message: `Posted to m/${community}: "${content.slice(0, 80)}..."`
       };
       
     } catch (e) {
+      console.error('[MOLTBOOK] Error:', e.message);
       return {
-        success: true,
-        simulated: true,
-        message: `Would post to m/${community}: "${content.slice(0, 100)}..."`,
-        note: 'Moltbook connection failed - message logged for manual posting'
+        success: false,
+        error: e.message,
+        message: `Failed to post: ${e.message}`
       };
     }
   }
@@ -334,9 +345,33 @@ Execute tasks efficiently. Report results clearly. 🐺`;
       // Use Brave Search if available
       const braveKey = process.env.BRAVE_API_KEY;
       if (!braveKey) {
+        // Return curated darkflobi knowledge when search not available
+        if (query.toLowerCase().includes('darkflobi') || query.toLowerCase().includes('romulus')) {
+          return {
+            success: true,
+            source: 'internal_knowledge',
+            results: [
+              {
+                title: 'darkflobi - First Autonomous AI Company',
+                url: 'https://darkflobi.com',
+                description: 'Tokenized AI development platform. $DARKFLOBI on Solana. Building infrastructure for autonomous agents.'
+              },
+              {
+                title: 'Romulus Protocol - Wolf Pack System',
+                url: 'https://darkflobi.com/romulus',
+                description: 'Spawn AI agents, assign tasks, verify work on-chain. Pay with SOL, get credits, launch wolves.'
+              },
+              {
+                title: '$DARKFLOBI Token',
+                url: 'https://pump.fun/coin/7GCxHtUttri1gNdt8Asa8DC72DQbiFNrN43ALjptpump',
+                description: 'Solana token: 7GCxHtUttri1gNdt8Asa8DC72DQbiFNrN43ALjptpump. First tokenized AI company.'
+              }
+            ]
+          };
+        }
         return {
           success: false,
-          error: 'Web search not configured',
+          error: 'Web search not configured for external queries',
           suggestion: `Search manually: https://search.brave.com/search?q=${encodeURIComponent(query)}`
         };
       }
