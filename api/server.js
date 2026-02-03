@@ -24,7 +24,7 @@ const { ActivityFeed } = require('../sdk/activity-feed');
 const { ProofAnchor } = require('../sdk/proof-anchor');
 const { AgentCommerce } = require('../sdk/agent-commerce');
 const { PaymentGate } = require('../sdk/payment-gate');
-const { WolfExecutor } = require('../sdk/wolf-executor');
+const { WolfExecutor, registerWolfOnMoltbook } = require('../sdk/wolf-executor');
 
 // Initialize services
 const wolfExecutor = new WolfExecutor();
@@ -153,6 +153,7 @@ const routes = {
         'POST /packs/register    - register new pack (🔑 requires key)',
         'POST /wolves/spawn      - spawn a wolf (🔑 requires key)',
         'POST /wolves/chat       - chat with wolf / execute tasks (🔑)',
+        'POST /wolves/identity   - create managed Moltbook identity (🔑 5 credits)',
         'GET  /wolves/:packId    - list pack wolves',
         'POST /hunts/complete    - complete a hunt (🔑 requires key)',
         'POST /hunts/prove       - log proof on-chain (🔑 requires key)',
@@ -557,6 +558,73 @@ const routes = {
           toolCost: extraCreditsCharged
         }
       });
+      
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
+  // Create Managed Wolf Identity on Moltbook (PROTECTED + PREMIUM)
+  'POST /wolves/identity': async (req, res) => {
+    try {
+      // Auth check
+      const auth = checkAuth(req);
+      if (!auth.authorized) {
+        return jsonResponse(res, { 
+          error: 'Unauthorized', 
+          hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
+        }, 401);
+      }
+      
+      const body = await parseBody(req);
+      if (!body.wolfName) {
+        return jsonResponse(res, { error: 'wolfName is required' }, 400);
+      }
+      
+      // Get API key for credit deduction
+      const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
+      
+      // Charge 5 credits for managed identity (premium feature)
+      if (auth.reason !== 'master_key') {
+        const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn', 5);
+        if (!creditResult.success) {
+          return jsonResponse(res, { 
+            error: creditResult.error,
+            credits: creditResult.credits,
+            needed: 5,
+            hint: 'Managed identity costs 5 credits. Top up at POST /access/purchase'
+          }, 402);
+        }
+      }
+      
+      // Register on Moltbook
+      const result = await registerWolfOnMoltbook(
+        body.wolfName,
+        body.description || `${body.wolfName} - Romulus wolf agent 🐺`
+      );
+      
+      if (!result.success) {
+        return jsonResponse(res, { 
+          error: result.error,
+          hint: 'Moltbook registration failed. Try a different name.'
+        }, 400);
+      }
+      
+      // Log activity
+      activityFeed.log('wolf_identity_created', {
+        wolfName: body.wolfName,
+        claimUrl: result.claimUrl
+      });
+      
+      jsonResponse(res, {
+        success: true,
+        wolfName: body.wolfName,
+        moltbookKey: result.apiKey,
+        claimUrl: result.claimUrl,
+        verificationCode: result.verificationCode,
+        message: `🐺 ${body.wolfName} is now on Moltbook! Use the moltbookKey for posting. Visit claimUrl to verify ownership (optional).`,
+        creditsUsed: 5
+      }, 201);
       
     } catch (e) {
       jsonResponse(res, { error: e.message }, 500);

@@ -9,8 +9,43 @@
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const CLAUDE_MODEL = process.env.WOLF_MODEL || 'claude-sonnet-4-20250514';
 
-// Moltbook API for posting
-const MOLTBOOK_API = 'https://www.moltbook.com/api';
+// Moltbook API
+const MOLTBOOK_API = 'https://www.moltbook.com/api/v1';
+
+/**
+ * Register a new wolf identity on Moltbook
+ * Returns API key and claim URL
+ */
+async function registerWolfOnMoltbook(wolfName, description) {
+  try {
+    const response = await fetch(`${MOLTBOOK_API}/agents/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: wolfName,
+        description: description || `Romulus wolf agent - autonomous AI for hire 🐺`
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error('[MOLTBOOK-REGISTER] Failed:', data);
+      return { success: false, error: data.error || 'Registration failed' };
+    }
+    
+    console.log('[MOLTBOOK-REGISTER] Success:', wolfName);
+    return {
+      success: true,
+      apiKey: data.agent?.api_key,
+      claimUrl: data.agent?.claim_url,
+      verificationCode: data.agent?.verification_code
+    };
+  } catch (e) {
+    console.error('[MOLTBOOK-REGISTER] Error:', e.message);
+    return { success: false, error: e.message };
+  }
+}
 
 // Security limits
 const MAX_MESSAGE_LENGTH = 2000;
@@ -438,4 +473,4 @@ Execute tasks efficiently. Report results clearly. 🐺`;
   }
 }
 
-module.exports = { WolfExecutor };
+module.exports = { WolfExecutor, registerWolfOnMoltbook };
