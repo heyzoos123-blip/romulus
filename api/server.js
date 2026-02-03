@@ -348,6 +348,50 @@ const routes = {
     }
   },
 
+  // Admin: clear a transaction from used list (MASTER KEY ONLY)
+  // Allows re-testing with same tx
+  'POST /access/admin/clear-tx': async (req, res) => {
+    try {
+      const auth = checkAuth(req);
+      if (!auth.authorized || auth.reason !== 'master_key') {
+        return jsonResponse(res, { error: 'Master key required' }, 403);
+      }
+      
+      const body = await parseBody(req);
+      if (!body.txSignature) {
+        return jsonResponse(res, { error: 'txSignature required' }, 400);
+      }
+      
+      const tx = body.txSignature;
+      
+      // Remove from transactions array
+      const txIdx = paymentGate.keys.transactions?.indexOf(tx);
+      if (txIdx === -1 || txIdx === undefined) {
+        return jsonResponse(res, { 
+          success: false, 
+          error: 'Transaction not found in used list' 
+        }, 404);
+      }
+      
+      paymentGate.keys.transactions.splice(txIdx, 1);
+      
+      // Also remove from txToKey mapping
+      if (paymentGate.keys.txToKey && paymentGate.keys.txToKey[tx]) {
+        delete paymentGate.keys.txToKey[tx];
+      }
+      
+      paymentGate.saveKeys();
+      
+      jsonResponse(res, {
+        success: true,
+        txSignature: tx,
+        message: 'Transaction cleared. Can be used again for testing 🐺'
+      });
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
   // Access stats (PUBLIC - shows aggregate only)
   'GET /access/stats': (req, res) => {
     const stats = paymentGate.getStats();
