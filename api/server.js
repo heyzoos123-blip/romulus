@@ -21,10 +21,12 @@ const { ProofOfHunt } = require('../scripts/proof-of-hunt');
 const { TreasuryWolf } = require('../scripts/treasury-wolf');
 const { BountyBoard } = require('../sdk/bounty-board');
 const { ActivityFeed } = require('../sdk/activity-feed');
+const { ProofAnchor } = require('../sdk/proof-anchor');
 
 // Initialize services
 const bountyBoard = new BountyBoard();
 const activityFeed = new ActivityFeed();
+const proofAnchor = new ProofAnchor();
 
 const PORT = process.env.ROMULUS_PORT || 3030;
 
@@ -86,7 +88,13 @@ const routes = {
         '--- ACTIVITY FEED ---',
         'GET  /activity          - recent events',
         'GET  /activity/summary  - activity summary',
-        'POST /activity          - log custom event'
+        'POST /activity          - log custom event',
+        '--- ON-CHAIN PROOFS ---',
+        'GET  /proofs            - recent proofs',
+        'GET  /proofs/stats      - proof statistics',
+        'POST /proofs/anchor     - anchor work to solana',
+        'GET  /proofs/verify/:tx - verify on-chain',
+        'GET  /proofs/wolf/:id   - proofs by wolf'
       ]
     });
   },
@@ -312,6 +320,72 @@ const routes = {
     } catch (e) {
       jsonResponse(res, { error: e.message }, 400);
     }
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // ON-CHAIN PROOF ANCHORING
+  // ═══════════════════════════════════════════════════════
+
+  // Proof stats
+  'GET /proofs/stats': (req, res) => {
+    const stats = proofAnchor.getStats();
+    jsonResponse(res, stats);
+  },
+
+  // Recent proofs
+  'GET /proofs': (req, res) => {
+    const parsedUrl = url.parse(req.url, true);
+    const limit = parseInt(parsedUrl.query.limit) || 20;
+    const proofs = proofAnchor.getRecent(limit);
+    jsonResponse(res, { proofs, count: proofs.length });
+  },
+
+  // Anchor proof to Solana
+  'POST /proofs/anchor': async (req, res) => {
+    try {
+      const body = await parseBody(req);
+      if (!body.wolfId || !body.taskType) {
+        return jsonResponse(res, { error: 'wolfId and taskType required' }, 400);
+      }
+      const result = await proofAnchor.proveWork({
+        wolfId: body.wolfId,
+        taskType: body.taskType,
+        taskDescription: body.taskDescription || '',
+        result: body.result || '',
+        agent: body.agent || 'darkflobi',
+        metadata: body.metadata || {}
+      });
+      
+      // Log to activity feed
+      if (result.success) {
+        activityFeed.log('proof_anchored', {
+          wolfId: body.wolfId,
+          taskType: body.taskType,
+          txSignature: result.proof?.txSignature,
+          hash: result.proof?.shortHash
+        });
+      }
+      
+      jsonResponse(res, result, result.success ? 201 : 500);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
+  // Verify on-chain proof
+  'GET /proofs/verify/:txSignature': async (req, res, params) => {
+    try {
+      const verification = await proofAnchor.verifyProof(params.txSignature);
+      jsonResponse(res, verification);
+    } catch (e) {
+      jsonResponse(res, { error: e.message }, 500);
+    }
+  },
+
+  // Get proofs by wolf
+  'GET /proofs/wolf/:wolfId': (req, res, params) => {
+    const proofs = proofAnchor.getWolfProofs(params.wolfId);
+    jsonResponse(res, { wolfId: params.wolfId, proofs, count: proofs.length });
   }
 };
 
