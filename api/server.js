@@ -23,13 +23,13 @@ const { BountyBoard } = require('../sdk/bounty-board');
 const { ActivityFeed } = require('../sdk/activity-feed');
 const { ProofAnchor } = require('../sdk/proof-anchor');
 const { AgentCommerce } = require('../sdk/agent-commerce');
-const { PaymentGate } = require('../sdk/payment-gate');
+// PaymentGate removed - using master key only
 const { WolfExecutor, registerWolfOnMoltbook } = require('../sdk/wolf-executor');
 
 // Initialize services
 const wolfExecutor = new WolfExecutor();
 const bountyBoard = new BountyBoard();
-const paymentGate = new PaymentGate();
+// paymentGate removed
 const activityFeed = new ActivityFeed();
 const proofAnchor = new ProofAnchor();
 const agentCommerce = new AgentCommerce();
@@ -87,18 +87,12 @@ function checkAuth(req) {
     return { authorized: false, reason: 'missing_key' };
   }
   
-  // Check master key first
+  // Check master key (only auth method now - PaymentGate removed)
   if (MASTER_API_KEY && apiKey === MASTER_API_KEY) {
     return { authorized: true, reason: 'master_key' };
   }
   
-  // Check paid keys through PaymentGate
-  const validation = paymentGate.validateKey(apiKey);
-  if (validation.valid) {
-    return { authorized: true, reason: validation.isMaster ? 'master_key' : 'paid_key', record: validation.record };
-  }
-  
-  return { authorized: false, reason: validation.error || 'invalid_key' };
+  return { authorized: false, reason: 'invalid_key' };
 }
 
 // Initialize services
@@ -141,22 +135,16 @@ const routes = {
       message: 'spawn your pack. build your empire. 🐺',
       endpoints: [
         'GET  /                  - this info',
-        '--- ACCESS (pay to use) ---',
-        'GET  /access/pricing    - get pricing & credit costs',
-        'POST /access/purchase   - buy credits (0.05 SOL = 50 credits)',
-        'POST /access/recover    - recover lost API key with payment txn',
-        'GET  /access/balance    - check your credit balance (🔑)',
-        'GET  /access/stats      - public stats',
-        '--- CORE ---',
+        '--- CORE (🔑 = requires master key) ---',
         'GET  /stats             - network statistics',
         'GET  /packs             - list all packs',
-        'POST /packs/register    - register new pack (🔑 requires key)',
-        'POST /wolves/spawn      - spawn a wolf (🔑 requires key)',
+        'POST /packs/register    - register new pack (🔑)',
+        'POST /wolves/spawn      - spawn a wolf (🔑)',
         'POST /wolves/chat       - chat with wolf / execute tasks (🔑)',
-        'POST /wolves/identity   - create managed Moltbook identity (🔑 5 credits)',
+        'POST /wolves/identity   - create managed Moltbook identity (🔑)',
         'GET  /wolves/:packId    - list pack wolves',
-        'POST /hunts/complete    - complete a hunt (🔑 requires key)',
-        'POST /hunts/prove       - log proof on-chain (🔑 requires key)',
+        'POST /hunts/complete    - complete a hunt (🔑)',
+        'POST /hunts/prove       - log proof on-chain (🔑)',
         'GET  /treasury          - treasury status',
         '--- BOUNTY BOARD ---',
         'GET  /bounties          - list open bounties',
@@ -198,207 +186,23 @@ const routes = {
   },
 
   // ═══════════════════════════════════════════════════════
-  // ACCESS / PAYMENT ENDPOINTS (public)
+  // ACCESS ENDPOINTS (DEPRECATED - using master key only now)
   // ═══════════════════════════════════════════════════════
 
-  // Get pricing info (PUBLIC)
   'GET /access/pricing': (req, res) => {
-    const pricing = paymentGate.getPricing();
-    jsonResponse(res, {
-      ...pricing,
-      note: 'One-time payment grants permanent API access',
-      protocol: 'romulus'
-    });
+    jsonResponse(res, { error: 'Payment system deprecated. Use master key.' }, 410);
   },
-
-  // Purchase credits - verify payment and issue/top-up key (PUBLIC)
-  'POST /access/purchase': async (req, res) => {
-    try {
-      const body = await parseBody(req);
-      
-      if (!body.txSignature) {
-        return jsonResponse(res, { 
-          error: 'txSignature is required',
-          hint: 'Send SOL to treasury, then provide the transaction signature'
-        }, 400);
-      }
-      
-      // Allow topping up existing key
-      const result = await paymentGate.purchaseCredits(
-        body.txSignature,
-        body.payerWallet || 'unknown',
-        body.apiKey // optional - to top up existing key
-      );
-      
-      if (!result.success) {
-        return jsonResponse(res, { error: result.error }, 400);
-      }
-      
-      // Log the purchase
-      activityFeed.log('credits_purchased', {
-        payerWallet: body.payerWallet,
-        amountSOL: result.amountPaid,
-        credits: result.credits || result.creditsAdded
-      });
-      
-      jsonResponse(res, result, 201);
-    } catch (e) {
-      jsonResponse(res, { error: e.message }, 500);
-    }
+  'POST /access/purchase': (req, res) => {
+    jsonResponse(res, { error: 'Payment system deprecated. Use master key.' }, 410);
   },
-
-  // Check credit balance (requires auth)
   'GET /access/balance': (req, res) => {
-    const auth = checkAuth(req);
-    if (!auth.authorized) {
-      return jsonResponse(res, { 
-        error: 'Unauthorized', 
-        hint: 'Provide your API key to check balance'
-      }, 401);
-    }
-    
-    const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
-    const balance = paymentGate.checkCredits(apiKey);
-    
-    if (!balance.valid) {
-      return jsonResponse(res, { error: balance.error }, 400);
-    }
-    
-    jsonResponse(res, {
-      credits: balance.credits,
-      totalPurchased: balance.totalPurchased,
-      totalUsed: balance.totalUsed,
-      isMaster: balance.isMaster || false,
-      costs: paymentGate.getPricing().costs
-    });
+    jsonResponse(res, { error: 'Payment system deprecated. Use master key.' }, 410);
   },
-
-  // Recover lost API key using payment transaction OR wallet address (PUBLIC)
-  'POST /access/recover': async (req, res) => {
-    try {
-      const body = await parseBody(req);
-      
-      // Can recover by tx OR by wallet
-      if (!body.txSignature && !body.wallet) {
-        return jsonResponse(res, { 
-          error: 'txSignature or wallet is required',
-          hint: 'Provide either a payment transaction signature or your wallet address'
-        }, 400);
-      }
-      
-      let result;
-      if (body.txSignature) {
-        result = await paymentGate.recoverKey(body.txSignature);
-      } else {
-        result = paymentGate.recoverByWallet(body.wallet);
-      }
-      
-      if (!result.success) {
-        return jsonResponse(res, { error: result.error }, 404);
-      }
-      
-      jsonResponse(res, result);
-    } catch (e) {
-      jsonResponse(res, { error: e.message }, 500);
-    }
+  'POST /access/recover': (req, res) => {
+    jsonResponse(res, { error: 'Payment system deprecated. Use master key.' }, 410);
   },
-
-  // Admin: manually issue key for a wallet (MASTER KEY ONLY)
-  'POST /access/admin/issue': async (req, res) => {
-    try {
-      // Must use master key
-      const auth = checkAuth(req);
-      if (!auth.authorized || auth.reason !== 'master_key') {
-        return jsonResponse(res, { error: 'Master key required' }, 403);
-      }
-      
-      const body = await parseBody(req);
-      if (!body.wallet || !body.credits) {
-        return jsonResponse(res, { error: 'wallet and credits required' }, 400);
-      }
-      
-      // Directly issue a key
-      const apiKey = paymentGate.generateApiKey();
-      const keyRecord = {
-        apiKey,
-        payerWallet: body.wallet,
-        credits: body.credits,
-        totalPurchased: 0,
-        totalUsed: 0,
-        issuedAt: new Date().toISOString(),
-        status: 'active',
-        txHistory: [],
-        issuedBy: 'admin'
-      };
-      
-      if (!paymentGate.keys.walletToKey) paymentGate.keys.walletToKey = {};
-      paymentGate.keys.walletToKey[body.wallet] = apiKey;
-      paymentGate.keys.issued.push(keyRecord);
-      paymentGate.saveKeys();
-      
-      jsonResponse(res, {
-        success: true,
-        apiKey,
-        wallet: body.wallet,
-        credits: body.credits,
-        message: 'Key issued by admin 🐺'
-      }, 201);
-    } catch (e) {
-      jsonResponse(res, { error: e.message }, 500);
-    }
-  },
-
-  // Admin: clear a transaction from used list (MASTER KEY ONLY)
-  // Allows re-testing with same tx
-  'POST /access/admin/clear-tx': async (req, res) => {
-    try {
-      const auth = checkAuth(req);
-      if (!auth.authorized || auth.reason !== 'master_key') {
-        return jsonResponse(res, { error: 'Master key required' }, 403);
-      }
-      
-      const body = await parseBody(req);
-      if (!body.txSignature) {
-        return jsonResponse(res, { error: 'txSignature required' }, 400);
-      }
-      
-      const tx = body.txSignature;
-      
-      // Remove from transactions array
-      const txIdx = paymentGate.keys.transactions?.indexOf(tx);
-      if (txIdx === -1 || txIdx === undefined) {
-        return jsonResponse(res, { 
-          success: false, 
-          error: 'Transaction not found in used list' 
-        }, 404);
-      }
-      
-      paymentGate.keys.transactions.splice(txIdx, 1);
-      
-      // Also remove from txToKey mapping
-      if (paymentGate.keys.txToKey && paymentGate.keys.txToKey[tx]) {
-        delete paymentGate.keys.txToKey[tx];
-      }
-      
-      paymentGate.saveKeys();
-      
-      jsonResponse(res, {
-        success: true,
-        txSignature: tx,
-        message: 'Transaction cleared. Can be used again for testing 🐺'
-      });
-    } catch (e) {
-      jsonResponse(res, { error: e.message }, 500);
-    }
-  },
-
-  // Access stats (PUBLIC - shows aggregate only)
   'GET /access/stats': (req, res) => {
-    const stats = paymentGate.getStats();
-    jsonResponse(res, {
-      ...stats,
-      pricing: paymentGate.getPricing()
-    });
+    jsonResponse(res, { error: 'Payment system deprecated. Use master key.' }, 410);
   },
 
   // ═══════════════════════════════════════════════════════
@@ -451,7 +255,7 @@ const routes = {
     }
   },
 
-  // Spawn wolf (PROTECTED + COSTS CREDITS)
+  // Spawn wolf (PROTECTED)
   'POST /wolves/spawn': async (req, res) => {
     try {
       // Auth check
@@ -461,20 +265,6 @@ const routes = {
           error: 'Unauthorized', 
           hint: 'Provide Authorization: Bearer <key> or X-API-Key header'
         }, 401);
-      }
-      
-      // Get API key for credit deduction
-      const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
-      
-      // Check and deduct credits
-      const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn');
-      if (!creditResult.success) {
-        return jsonResponse(res, { 
-          error: creditResult.error,
-          credits: creditResult.credits,
-          needed: creditResult.needed,
-          hint: 'Top up at POST /access/purchase'
-        }, 402); // 402 Payment Required
       }
       
       const body = await parseBody(req);
@@ -489,9 +279,6 @@ const routes = {
       if (result.error) {
         return jsonResponse(res, result, 404);
       }
-      
-      // Add credits info to response
-      result.creditsRemaining = creditResult.remaining;
       
       jsonResponse(res, result, 201);
     } catch (e) {
@@ -513,7 +300,7 @@ const routes = {
     });
   },
 
-  // Wolf Chat - Execute tasks and have conversations with wolves (PROTECTED + COSTS CREDITS)
+  // Wolf Chat - Execute tasks and have conversations with wolves (PROTECTED)
   'POST /wolves/chat': async (req, res) => {
     try {
       // Auth check
@@ -536,30 +323,13 @@ const routes = {
         return jsonResponse(res, { error: 'Invalid wolfId format' }, 400);
       }
       
-      // Get API key for credit deduction
       const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
       
-      // Charge 1 credit per chat message (prevents abuse)
-      // Master key is exempt
-      if (auth.reason !== 'master_key') {
-        const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn');
-        if (!creditResult.success) {
-          return jsonResponse(res, { 
-            error: creditResult.error,
-            credits: creditResult.credits,
-            needed: creditResult.needed,
-            hint: 'Top up at POST /access/purchase'
-          }, 402);
-        }
-      }
-      
-      // Execute the task with rate limiting context
-      // User can provide their own API keys for external services
+      // Execute the task
       const result = await wolfExecutor.execute(wolfId, body.message, {
         context: body.context || 'chat',
         originalTask: body.originalTask,
-        apiKey: apiKey, // For rate limiting
-        // User-provided credentials (wolves don't use darkflobi accounts)
+        apiKey: apiKey,
         moltbookKey: body.moltbookKey || null,
         twitterKey: body.twitterKey || null
       });
@@ -568,39 +338,19 @@ const routes = {
         return jsonResponse(res, { error: result.error, hint: result.hint }, 500);
       }
       
-      // Charge extra credits for premium tools (master key exempt)
-      let extraCreditsCharged = 0;
-      if (auth.reason !== 'master_key' && result.toolResult?.creditCost > 0) {
-        const extraCost = result.toolResult.creditCost;
-        const extraCharge = paymentGate.useCredits(apiKey, 'wolf_chat', extraCost);
-        if (extraCharge.success) {
-          extraCreditsCharged = extraCost;
-        }
-        // Don't fail if extra charge fails - tool already executed
-      }
-      
       // Log activity
       activityFeed.log('wolf_chat', {
         wolfId: wolfId,
         context: body.context,
-        toolUsed: result.toolUsed,
-        extraCredits: extraCreditsCharged
+        toolUsed: result.toolUsed
       });
-      
-      // Get current balance
-      const balance = paymentGate.checkCredits(apiKey);
       
       jsonResponse(res, {
         success: true,
         wolfId: wolfId,
         reply: result.reply,
         toolUsed: result.toolUsed,
-        toolResult: result.toolResult,
-        credits: {
-          used: 1 + extraCreditsCharged,
-          remaining: balance.credits || 0,
-          toolCost: extraCreditsCharged
-        }
+        toolResult: result.toolResult
       });
       
     } catch (e) {
@@ -608,7 +358,7 @@ const routes = {
     }
   },
 
-  // Create Managed Wolf Identity on Moltbook (PROTECTED + PREMIUM)
+  // Create Managed Wolf Identity on Moltbook (PROTECTED)
   'POST /wolves/identity': async (req, res) => {
     try {
       // Auth check
@@ -623,22 +373,6 @@ const routes = {
       const body = await parseBody(req);
       if (!body.wolfName) {
         return jsonResponse(res, { error: 'wolfName is required' }, 400);
-      }
-      
-      // Get API key for credit deduction
-      const apiKey = req.headers['authorization']?.slice(7) || req.headers['x-api-key'];
-      
-      // Charge 5 credits for managed identity (premium feature)
-      if (auth.reason !== 'master_key') {
-        const creditResult = paymentGate.useCredits(apiKey, 'wolf_spawn', 5);
-        if (!creditResult.success) {
-          return jsonResponse(res, { 
-            error: creditResult.error,
-            credits: creditResult.credits,
-            needed: 5,
-            hint: 'Managed identity costs 5 credits. Top up at POST /access/purchase'
-          }, 402);
-        }
       }
       
       // Register on Moltbook
@@ -666,8 +400,7 @@ const routes = {
         moltbookKey: result.apiKey,
         claimUrl: result.claimUrl,
         verificationCode: result.verificationCode,
-        message: `🐺 ${body.wolfName} is now on Moltbook! Use the moltbookKey for posting. Visit claimUrl to verify ownership (optional).`,
-        creditsUsed: 5
+        message: `🐺 ${body.wolfName} is now on Moltbook! Use the moltbookKey for posting. Visit claimUrl to verify ownership (optional).`
       }, 201);
       
     } catch (e) {
