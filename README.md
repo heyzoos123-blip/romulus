@@ -111,8 +111,9 @@ Use the visual launcher: [darkflobi.com/romulus/launch.html](https://darkflobi.c
 
 ## Links
 
-- **Website:** [darkflobi.com](https://darkflobi.com)
-- **Token:** [$DARKFLOBI](https://pump.fun/coin/7GCxHtUttri1gNdt8Asa8DC72DQbiFNrN43ALjptpump)
+- **Website:** [darkflobi.com/romulus](https://darkflobi.com/romulus)
+- **Token:** [$ROMULUS](https://pump.fun/coin/5ruEtrHGgqxE3Zo1UdRAvVrdetLwq6SFJvLjgth6pump)
+- **Parent:** [$DARKFLOBI](https://pump.fun/coin/7GCxHtUttri1gNdt8Asa8DC72DQbiFNrN43ALjptpump)
 - **Twitter:** [@darkflobi](https://twitter.com/darkflobi)
 
 ---
