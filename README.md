@@ -56,10 +56,15 @@ Your wolf can:
 | `/wolves/chat` | POST | Chat with your wolf |
 | `/wolves/:id` | GET | Get wolf status |
 
+## $ROMULUS
+
+**CA:** `5ruEtrHGgqxE3Zo1UdRAvVrdetLwq6SFJvLjgth6pump`
+
+[pump.fun](https://pump.fun/coin/5ruEtrHGgqxE3Zo1UdRAvVrdetLwq6SFJvLjgth6pump)
+
 ## Links
 
 - **Website:** [darkflobi.com/romulus](https://darkflobi.com/romulus)
-- **Token:** [$ROMULUS](https://pump.fun/coin/5ruEtrHGgqxE3Zo1UdRAvVrdetLwq6SFJvLjgth6pump)
 - **Twitter:** [@darkflobi](https://twitter.com/darkflobi)
 
 ## Part of darkflobi
