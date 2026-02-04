@@ -1,0 +1,31 @@
+run:
+  go: "1.23"
+  tests: false
+  allow-parallel-runners: true
+linters:
+  disable:
+    - contextcheck
+    - cyclop
+    - depguard
+    - err113
+    - exhaustruct
+    - forcetypeassert
+    - funlen
+    - godot
+    - godox
+    - gosec
+    - ireturn
+    - lll
+    - mnd
+    - nonamedreturns
+    - perfsprint
+    - tagliatelle
+    - varnamelen
+    - wrapcheck
+    - wsl
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

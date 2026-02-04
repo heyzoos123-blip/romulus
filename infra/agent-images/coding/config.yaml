@@ -1,0 +1,23 @@
+# Romulus Coding Agent Config
+gateway:
+  port: 8080
+  
+provider:
+  default: anthropic
+  
+session:
+  defaultModel: claude-sonnet-4-20250514
+  
+workspace:
+  path: /workspace
+  
+tools:
+  exec: true
+  read: true
+  write: true
+  edit: true
+  browser: false
+  
+health:
+  enabled: true
+  path: /health

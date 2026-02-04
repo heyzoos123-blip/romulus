@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  gateway:
+    build: ./gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - ROMULUS_TOKEN=5ruEtrHGgqxE3Zo1UdRAvVrdetLwq6SFJvLjgth6pump
+      - SOLANA_RPC=https://api.mainnet-beta.solana.com
+      - HYPERCORE_URL=http://hypercore:8443
+      - PORT=3000
+    depends_on:
+      - hypercore
+    restart: unless-stopped
+
+  hypercore:
+    build: ./hypercore
+    ports:
+      - "8443:8443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - hypercore-data:/var/lib/hypercore
+    privileged: true
+    restart: unless-stopped
+
+  # Redis for session state (optional)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  hypercore-data:
+  redis-data:

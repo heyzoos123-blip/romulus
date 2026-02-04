@@ -1,0 +1,48 @@
+name: build
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: calculate version
+        id: calculate-version
+        uses: bitshifted/git-auto-semver@v1
+      - uses: docker/setup-buildx-action@v2
+      - uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: "Dockerfile"
+          tags: hypercore:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          push: false
+      - uses: addnab/docker-run-action@v3
+        with:
+          image: hypercore:latest
+          options: -v ${{ github.workspace }}:/hypercore
+          shell: bash
+          run: /hypercore/scripts/package.sh
+      - name: create tag
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag ${{ steps.calculate-version.outputs.version-string }}
+          git push origin ${{ steps.calculate-version.outputs.version-string }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.calculate-version.outputs.version-string }}
+          fail_on_unmatched_files: true
+          files: hypercore.tar.gz

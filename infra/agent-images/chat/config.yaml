@@ -1,0 +1,16 @@
+# Romulus Chat Agent Config
+gateway:
+  port: 8080
+  
+provider:
+  default: anthropic
+  
+session:
+  defaultModel: claude-sonnet-4-20250514
+  
+workspace:
+  path: /workspace
+  
+health:
+  enabled: true
+  path: /health
